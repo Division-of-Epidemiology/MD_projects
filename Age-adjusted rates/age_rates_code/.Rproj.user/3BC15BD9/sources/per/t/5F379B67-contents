@@ -1,0 +1,150 @@
+##Breaking it down by Gender and race for only 2024
+library(knitr)
+library(epitools)
+library(ggplot2)
+library(dplyr)
+
+
+#Labels for the age groups
+
+age_groups <- c("0-4","5-9", "10-14", "15-19", "20-24", "25-34", "35-44", "45-54", "55-64", "65-74", "75-84", "85+")
+population_m <- c(22806,	19566,	18505,	19231,	23228,	69698,	48091,	38231,	36597,	24950,	9902,	9911)
+population_f <- c(22554,	18872,	18049,	19217,	26183,	74021,	48725,	39241,	41755,	30397,	14446,	6687)
+
+
+
+##Standard population
+std_pop <- c(0.06913565,
+             0.072532898,
+             0.073031744,
+             0.07216878,
+             0.06647757,
+             0.135573163,
+             0.162612786,
+             0.134833997,
+             0.087247027,
+             0.06603698,
+             0.044841498,
+             0.015507912)
+
+#Setting the deaths in each population 
+deaths_m <- deaths_20$male$Freq
+deaths_f <- deaths_20$female$Freq
+##Now we need to create a dataframe with the vectors created above
+df_f <- data.frame(age=age_groups, deaths = deaths_f, pop=population_f, group = 'Female')
+
+df_m <- data.frame(age=age_groups, deaths=deaths_m, pop=population_m, group='Male')
+
+df_all <- rbind(df_m, df_m)
+df_pop <- data.frame(age=age_groups, pop=std_pop)
+
+##Running epitools and storing them in a table
+pop_f_adjust <- ageadjust.direct(deaths_f, population_f, rate=NULL, 
+                                  std_pop, conf.level = 0.95)
+
+Age_Adjusted_Female <- 10^5*pop_f_adjust
+Age_Adjusted_Female
+
+
+pop_m_adjust <- ageadjust.direct(deaths_m, population_m, rate=NULL, 
+                                  std_pop, conf.level = 0.95)
+
+Age_Adjusted_Male <- 10^5*pop_m_adjust
+Age_Adjusted_Male
+
+
+##
+males <- demos_24$male
+females <- demos_24$female
+
+pop_m <- 22806+	19566+	18505+	19231+	23228+	69698+	48091+	38231+	36597+	24950+	9902+	9911
+pop_f <- 22554+	18872+	18049+	19217+	26183+	74021+	48725+	39241+	41755+	30397+	14446+	6687
+
+df_m <- data.frame(deaths=males, pop=pop_m)
+df_m <- df_m %>%
+  mutate(Rate = (deaths/pop)*10^5,
+         CI_low = (10^5/pop)*(deaths-1.96*(sqrt(deaths))),
+         CI_high = (10^5/pop)*(deaths+1.96*(sqrt(deaths))))
+df_m
+
+df_f <- data.frame(deaths=females, pop=pop_f)
+df_f <- df_f %>%
+  mutate(Rate = (deaths/pop)*10^5,
+         CI_low = (10^5/pop)*(deaths-1.96*(sqrt(deaths))),
+         CI_high = (10^5/pop)*(deaths+1.96*(sqrt(deaths))))
+df_f
+##########Race
+
+#Labels for the age groups
+
+age_groups <- c("0-4","5-9", "10-14", "15-19", "20-24", "25-34", "35-44", "45-54", "55-64", "65-74", "75-84", "85+")
+population_w <- c(27048,	21481,	19962,	22190,	32834,	100525,	70290,	51547,	51351,	41226,	20334,	7738)
+population_b <- c(13035,	12364,	12428,	13455,	15178,	32835,	25271,	21713,	21855,	15057,	5420,	1803)
+
+
+
+##Standard population
+std_pop <- c(0.06913565,
+             0.072532898,
+             0.073031744,
+             0.07216878,
+             0.06647757,
+             0.135573163,
+             0.162612786,
+             0.134833997,
+             0.087247027,
+             0.06603698,
+             0.044841498,
+             0.015507912)
+
+#Setting the deaths in each population 
+deaths_w <- deaths_24$white$Freq
+deaths_b <- deaths_24$black$Freq
+
+##Now we need to create a dataframe with the vectors created above
+df_w <- data.frame(age=age_groups, deaths = deaths_w, pop=population_w, group = 'White')
+
+df_b <- data.frame(age=age_groups, deaths=deaths_b, pop=population_b, group='Black')
+
+
+df_race <- rbind(df_w, df_b)
+df_pop2 <- data.frame(age=age_groups, pop=std_pop)
+
+##Running epitools and storing them in a table
+pop_w_adjust <- ageadjust.direct(deaths_w, population_w, rate=NULL, 
+                                 std_pop, conf.level = 0.95)
+
+Age_Adjusted_white <- 10^5*pop_w_adjust
+Age_Adjusted_white
+
+
+pop_b_adjust <- ageadjust.direct(deaths_b, population_b, rate=NULL, 
+                                 std_pop, conf.level = 0.95)
+
+Age_Adjusted_black <- 10^5*pop_b_adjust
+Age_Adjusted_black
+
+
+
+white <- 1+	0+	0+	4+	11+	62+	73+	81+	66+	17+	0+ 1
+black <- 1+	0+	0+	0+	4+	29+	42+	44+	33+ 25+	1+ 1
+
+
+pop_w <- 27048+	21481+	19962+	22190+	32834+	100525+	70290+	51547+	51351+	41226+	20334+	7738
+pop_b <- 13035+	12364+	12428+	13455+	15178+	32835+	25271+	21713+	21855+	15057+	5420+	1803
+
+df_w <- data.frame(deaths=white, pop=pop_w)
+df_w <- df_w %>%
+  mutate(CI_low = (10^5/pop)*(deaths-1.96*(sqrt(deaths))),
+         CI_high = (10^5/pop)*(deaths+1.96*(sqrt(deaths))))
+df_w
+
+df_b <- data.frame(deaths=black, pop=pop_b)
+df_b <- df_b %>%
+  mutate(CI_low = (10^5/pop)*(deaths-1.96*(sqrt(deaths))),
+         CI_high = (10^5/pop)*(deaths+1.96*(sqrt(deaths))))
+df_b
+
+
+
+

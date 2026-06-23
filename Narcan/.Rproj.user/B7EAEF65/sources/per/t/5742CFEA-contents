@@ -1,0 +1,355 @@
+##Looking at percentage of Bystander NArcan usage in EMS data 2018-2024
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+
+
+
+
+ncan <- read.csv("C:/Users/mdickson/OneDrive - Metro Nashville Government/Documents/CVS_Files/Narcan/Narcan/EMS_Tableau_Quarter.csv")
+
+names(ncan)
+
+ncan <- ncan %>% 
+  mutate(Bystander = ifelse(
+    # Check if a bystander administered Narcan (corrected regex)
+    str_detect(ncan$Incident_Narrative, regex(
+      "(layperson|by[ ]?stander|friend|family|wife|mother|father|staff|spouse)\\b.*?(have|given|gave|administered|used|provided)\\b.*?\\b(narcan)\\b|\\b(narcan)\\b.*?(have|gave|administered|used|provided|given)\\b.*?(staff|layperson|by[ ]?stander|friend|wife|family|mother|father|spouse)",
+      ignore_case = TRUE)) |
+      str_detect(ncan$Incident_Narrative, regex(
+        "(prior to arrival|before we got there|prior to EMS arrival|uoa)\\b.*?(have|given|gave|administered|used|provided)\\b.*?\\b(narcan)\\b|\\b(narcan)\\b.*?(have|gave|administered|used|provided|given)\\b.*(prior to arrival|before we got there|prior to EMS arrival|uoa)", 
+        ignore_case = TRUE)) &
+      
+      # Exclude cases where EMS or Fire administered Narcan (correction to exclude medical personnel)
+      !str_detect(ncan$Incident_Narrative, regex(
+        "(EMS|fire|paramedic|ambulance|medic|firefighter|first responders|Pt).*narcan",
+        ignore_case = TRUE)),
+    1, 0),
+    
+    # PD_jail flag: Narcan + Jail-related
+    PD_jail = ifelse(
+      str_detect(ncan$Incident_Narrative, regex(
+        "(given|administered|used|gave).*narcan|narcan.*(given|administered|used|gave)", 
+        ignore_case = TRUE)) &
+        str_detect(ncan$Incident_Narrative, regex(
+          "\\b(jail|prison|corrections|officer|PD|MNPD|NPD|jail staff)\\b", 
+          ignore_case = TRUE)),
+      1, 0),
+    
+    # FIRE_EMS flag: Narcan + Fire or EMS-related
+    FIRE_EMS = ifelse(
+      str_detect(ncan$Incident_Narrative, regex(
+        "(given|administered|used|gave).*narcan|narcan.*(given|administered|used|gave)", 
+        ignore_case = TRUE)) &
+        str_detect(ncan$Incident_Narrative, regex(
+          "\\b(fire|FIRE|Engine|crew|EMS|first responders)\\b", 
+          ignore_case = TRUE)),
+      1, 0))
+
+
+
+ncan$Incident_Date <- mdy(ncan$Incident_Date)
+ncan$Year <- year(ncan$Incident_Date)
+
+ncan_track <- ncan %>% select(Incident_Date, Incident_Narrative, Age, Gender, Race,Address, ZIP, ZIP1, Med_Admin, Dosage, Bystander, Dest_Pt_Disp, Disposition_Patient_Disposition, Medication_Administered, MMWR_Year, PD_jail, Address,Incident_Postal_Code) %>%
+  mutate(across(c(Incident_Narrative, Medication_Administered, Med_Admin, Dosage),
+                ~ iconv(as.character(.), to="UTF-8", sub="")),
+         Med_Admin= if_else(is.na(Med_Admin) | Med_Admin == "", "None", Med_Admin),
+         Medication_Administered = if_else(is.na(Medication_Administered) | Medication_Administered == "", "None", Medication_Administered),
+         Dosage = if_else(is.na(Dosage) | Dosage == "", "None", Dosage),
+         Narcan = if_else(
+             grepl("narcan", Med_Admin, ignore.case = TRUE) | 
+             grepl("narcan", Medication_Administered, ignore.case = TRUE) | 
+             grepl("narcan", Incident_Narrative, ignore.case=TRUE) |
+             Bystander == 1, 
+           "Yes", 
+           "No")) 
+
+write.csv(ncan_track, "C:/Users/mdickson/OneDrive - Metro Nashville Government/Documents/CVS_Files/Narcan/Narcan/narcan_tracking.csv", row.names = FALSE)
+
+
+
+incidents <- ncan_track %>%
+  filter(PD_jail == 0) %>%
+  filter(Narcan == "Yes") %>%
+  group_by(MMWR_Year, Bystander) %>%
+  summarise(Count = n()) %>%
+  mutate(Total_count=sum(Count),
+         Percentage_BS = ifelse(Bystander==1, (Count/Total_count)*100, NA_real_))
+
+incidents
+
+total_values <- c(4024,5335,5275,5274,5166,4199)
+totals <- tibble(MMWR_Year=2019:2024, total=total_values)
+
+
+totals
+##looking at transports overtime
+transport_ref <- ncan %>%
+     group_by(MMWR_Year, Dest_Pt_Disp, Disposition_Patient_Disposition) %>%
+     filter(Dest_Pt_Disp == "Patient Refused Transport" | Disposition_Patient_Disposition == "Patient Refused Transport") %>%
+     summarise(count=n())
+
+transport_ref <- transport_ref %>%
+  group_by(MMWR_Year) %>%
+  summarise(count=sum(count)) %>%
+  left_join(totals, by="MMWR_Year") %>%
+  mutate(MMWR_Year = ifelse(MMWR_Year == 2023, 2023, MMWR_Year),
+         Percent = count/total *100) %>%
+  arrange(MMWR_Year)
+
+transport_ref
+
+
+transport_doa <- ncan %>%
+  group_by(MMWR_Year, Dest_Pt_Disp, Disposition_Patient_Disposition) %>%
+  filter(Dest_Pt_Disp == "Dead on Arrival" | Disposition_Patient_Disposition == "Dead on Arrival") %>%
+  summarise(count=n())
+
+transport_doa
+
+transport <- ncan %>%
+  filter(!(MMWR_Year >= 2015 & MMWR_Year <= 2018)) %>%
+  filter(Dest_Pt_Disp == "Evaluated/Treated, Transported by EMS" | 
+           Disposition_Patient_Disposition == "Patient Treated, Transported by EMS" | 
+           Dest_Pt_Disp == "Patient Treated, Transported by EMS" |
+           Dest_Pt_Disp =="Patient Treated, Transferred Care" |
+           Disposition_Patient_Disposition == "Patient Treated, Transferred Care") %>%
+  group_by(MMWR_Year, Dest_Pt_Disp, Disposition_Patient_Disposition) %>%
+  summarise(count = n(), .groups = "drop")
+
+transport <- transport %>%
+  group_by(MMWR_Year) %>%
+  summarise(count=sum(count)) %>%
+  left_join(totals, by="MMWR_Year") %>%
+  mutate(Percent = count/total *100) %>%
+  arrange(MMWR_Year)
+
+transport
+
+ggplot(transport, aes(x = as.factor(MMWR_Year), y = Percent)) +
+  geom_bar(stat = "identity", fill="red") +
+  labs(title = "Percent by Year", x = "Year", y = "Percentage") +
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12)
+  )
+
+
+
+
+ggplot(transport_ref, aes(x = as.factor(MMWR_Year), y = Percent)) +
+  geom_bar(stat = "identity", fill="blue") +
+  labs(title = "Percent by Year", x = "Year", y = "Percentage") +
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12)
+  )
+
+
+#### Narcan use from EMS data
+EMS_ncan <- ncan_track %>%
+  filter(PD_jail == 0) %>%
+  filter(MMWR_Year != 2015) %>%
+  group_by(MMWR_Year, Narcan) %>%
+  summarise(count = n()) %>%
+  mutate(Total_count=sum(count),
+         Percentage_BS = ifelse(Narcan=="Yes", (count/Total_count)*100, NA_real_))
+
+print(EMS_ncan)
+
+##Trying to pull out Bystander Narcan use from EMS data
+bystander_ncan <- ncan_track %>%
+  filter(PD_jail == 0) %>%
+  filter(MMWR_Year != 2015) %>%
+  filter(Narcan == "Yes") %>%
+  group_by(MMWR_Year, Bystander) %>%
+  summarise(count = n()) %>%
+  mutate(Total_count=sum(count),
+         Percentage_BS = ifelse(Bystander==1, (count/Total_count)*100, NA_real_),
+         Percent_no = ifelse(Bystander==0, (count/Total_count)*100, NA_real_))
+bystander_ncan
+
+
+
+bystander_ncan$Bystander <- factor(bystander_ncan$Bystander, levels = c(0, 1), labels = c("No", "Yes"))
+
+narcan_counts <- ncan_track %>%
+  filter(MMWR_Year != 2015) %>%
+  group_by(MMWR_Year) %>%
+  summarise(Narcan_used = sum(Narcan == "Yes"))
+
+
+
+# Reshape data from wide to long format
+bystander_ncan_long <- bystander_ncan %>%
+  pivot_longer(cols = c(Percentage_BS, Percent_no), 
+               names_to = "Type", 
+               values_to = "Percentage") 
+
+# Plot the stacked bar graph
+ggplot(bystander_ncan_long, aes(x = as.factor(MMWR_Year), y = Percentage, fill = Type)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Bystander ONLY Involvement Over Years", 
+       x = "Year", 
+       y = "Percentage of Incidents") +
+  scale_fill_manual(values = c("Percentage_BS" = "blue", "Percent_no" = "gray"), 
+                    labels = c("Non-Bystander Involvement", "Bystander Involvement")) +  # Custom legend labels
+  guides(fill = guide_legend(title = "Bystander Type")) +
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+
+##Graphing counts instead of %
+counts <- bystander_ncan %>%
+  filter(MMWR_Year != 2024) %>%
+  select(MMWR_Year, Bystander, count) %>%
+  filter(Bystander == 1)
+  
+counts
+
+ggplot(counts, aes(x = as.factor(MMWR_Year), y = count)) +  
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Bystander ONLY Involvement", 
+       x = "Year", 
+       y = "Number of Incidents") +
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+
+narcan_counts <- narcan_counts %>%
+  filter(MMWR_Year != 2024)
+
+narcan_counts
+
+ggplot(narcan_counts, aes(x = as.factor(MMWR_Year), y = Narcan_used)) +  
+  geom_line(aes(group = 1), color = "black", size = 2) +  # Ensure the line is formed across the years
+  geom_point(color = "black", size = 4) +  # Add points at each year
+  labs(title = "Total Narcan Used", 
+       x = "Year", 
+       y = "Narcan Used") +
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+
+
+##Writing out a CSV file for ArcGIS
+bystander <- ncan_track %>% select(Incident_Date, Age, Gender, Race, Address, ZIP, Incident_Street_Address, Incident_Postal_Code, Med_Admin, Dosage, Bystander, Medication_Administered, Year, PD_jail, Narcan) %>%
+  filter(PD_jail == 0 & Bystander == 1) %>%
+  filter(Narcan == 'Yes') 
+
+narcan_countswrite.csv(bystander, "Bystander.csv", row.names = FALSE)
+
+
+##Looking at the percentage of PD/jail admin narcan 
+
+PD_incidents <- ncan_track %>%
+    filter(Bystander == 1) %>%
+    filter(MMWR_Year != 2015) %>%
+   group_by(MMWR_Year, PD_jail) %>%
+    summarise(Count = n()) %>%
+  mutate(Total_count=sum(Count),
+         Percentage_PD = ifelse(PD_jail==1, (Count/Total_count)*100, NA_real_))
+
+PD_incidents
+
+ggplot(PD_incidents %>% filter(PD_jail == 1), aes(x = as.factor(MMWR_Year), y = Percentage_PD, group=1)) +
+  geom_line() + 
+  geom_point() + 
+  labs(
+    title = "Percentage of PD Jail Incidents Over Time",
+    x = "Year",
+    y = "Percentage of PD Jail Incidents"
+  ) +
+  theme_minimal()
+
+#####Looking at what zip codes have the highest concentration of activity vs. narcan admin
+total_counts <- ncan_track %>%
+  filter(PD_jail == 0, MMWR_Year !=2015) %>%
+  group_by(MMWR_Year) %>%
+  summarise(Total_count = n(), .groups = "drop")
+
+zip_code <- ncan_track %>%
+  filter(PD_jail == 0, MMWR_Year != 2015) %>%
+  group_by(MMWR_Year, ZIP, ZIP1,Bystander, Incident_Postal_Code) %>%
+  summarise(Count = n(), .groups = "drop") %>%
+  left_join(total_counts, by="MMWR_Year") %>%
+  mutate(Percentage_BS = ifelse(Bystander == 1, (Count/Total_count)*100, NA_real_))
+
+
+
+zip_code <- zip_code %>%
+  mutate(combined_zip = coalesce(ZIP, ZIP1, Incident_Postal_Code))
+
+
+
+top_zip_codes <- zip_code %>%
+  select(-ZIP, -ZIP1, -Incident_Postal_Code) %>%
+  group_by(MMWR_Year) %>%
+  arrange(desc(Percentage_BS)) %>%
+  slice_head(n=5) 
+  
+  
+
+cbbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+ggplot(top_zip_codes, aes(x=as.factor(MMWR_Year), y=Percentage_BS, fill= as.factor(combined_zip))) +
+  geom_bar(stat="identity", position = "dodge") +
+  scale_fill_manual(values = cbbPalette) +
+  labs(
+    title = "Top 5 ZIP Codes per Year",
+    x="Year",
+    y="Percentage of Bystander Admin",
+    fill="ZIP Code"
+  ) +
+  theme_minimal() 
+  
+  
+  
+  
+  
+  
+# Reshape data from wide to long format
+bystander_ncan_long <- bystander_ncan %>%
+  pivot_longer(cols = c(Percentage_BS, Percent_no), 
+               names_to = "Type", 
+               values_to = "Percentage") 
+
+# Plot the stacked bar graph
+ggplot(bystander_ncan_long, aes(x = as.factor(MMWR_Year), y = Percentage, fill = Type)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Bystander ONLY Involvement", 
+       x = "Year", 
+       y = "Percentage of Incidents") +
+  guides(fill = guide_legend(title = "Bystander Type")) +
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+  
+

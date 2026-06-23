@@ -1,0 +1,287 @@
+library(MASS)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(AER)
+library(car)
+library(ggplot2)
+library(ggeffects)
+library(gridExtra)
+library(boot)
+library(knitr)
+library(kableExtra)
+library(formattable)
+library(purrr)
+
+
+write.csv(zip_change, "C:/Users/mdickson/OneDrive - Metro Nashville Government/Desktop/CVS_Files/model_data.csv")
+
+##testing non-time models
+model_refined <- glm.nb(Total_ems ~ Total_ME + median_age + median_income + 
+                          low.ed + uninsured + Total_narcan, 
+                        data = zip_change, link = log)
+
+AIC(model_refined)
+
+# Test a few key interactions
+model_interact1 <- glm.nb(Total_ems ~ Total_ME + median_age + median_income + 
+                            low.ed + percent_nonwhite + uninsured + Total_narcan +
+                            Total_ME:uninsured,  
+                          data = zip_change, link = log)
+
+AIC(model_interact1)  
+summary(model_interact1)
+
+# Remove non-significant variables
+model_cleaned <- glm.nb(Total_ems ~ Total_ME + median_age + low.ed + 
+                          uninsured + Total_narcan + Total_ME:uninsured, 
+                        data = zip_change, link = log)
+
+AIC(model_cleaned)
+plot(model_cleaned)
+summary(model_cleaned)
+
+# Time-based split 
+train_data <- zip_change[zip_change$Year %in% c(2021, 2022, 2023), ]
+test_data <- zip_change[zip_change$Year == 2024, ]
+
+# Refit model on training data only
+model_validation <- glm.nb(Total_ems ~ Total_ME + median_age + low.ed + 
+                             uninsured + Total_narcan + Total_ME:uninsured, 
+                           data = train_data, link = log)
+
+# Test predictions on 2024 data
+test_predictions <- predict(model_validation, newdata = test_data, se.fit = TRUE)
+
+# Compare predicted vs actual
+validation_results <- test_data %>%
+  mutate(
+    predicted = exp(test_predictions$fit),
+    actual = Total_ems,
+    error = actual - predicted,
+    abs_error = abs(error),
+    pct_error = abs(error) / actual * 100
+  )
+
+
+# Summary statistics
+mean(validation_results$abs_error, na.rm = TRUE)  # Mean absolute error
+mean(validation_results$pct_error, na.rm = TRUE)  # Mean percentage error
+cor(validation_results$predicted, validation_results$actual)  # Correlation
+
+
+# Check the scale of your EMS calls to contextualize the error
+summary(validation_results$actual)  # What's the typical range?
+median(validation_results$actual)   # Median actual calls
+
+
+ggplot(validation_results, aes(x=predicted, y=actual)) +
+  geom_point() +
+  geom_abline(slope=1, intercept=0, color="red") +
+  scale_x_log10() + scale_y_log10()
+
+
+
+
+
+
+
+create_scenario_predictions <- function(model, years = 2025:2030) {
+  
+  # Base year data
+  base_data <- zip_change %>%
+    filter(Year == max(Year)) %>%
+    group_by(Zip) %>%
+    summarise(across(c(Total_ME, median_age, low.ed, uninsured, Total_narcan),
+                     ~ mean(.x, na.rm = TRUE)), .groups = "drop")
+  
+  scenarios <- list(
+    optimistic = list(
+      Total_ME = 0.90,      # 10% decrease in ME cases
+      uninsured = 0.95      # 5% decrease in uninsured
+    ),
+    pessimistic = list(
+      Total_ME = 1.10,      # 10% increase in ME cases  
+      uninsured = 1.10      # 10% increase in uninsured
+    ),
+    baseline = list(
+      Total_ME = 1.00,      # No change
+      uninsured = 1.00
+    )
+  )
+  
+  all_predictions <- map_dfr(names(scenarios), function(scenario_name) {
+    scenario_data <- base_data %>%
+      mutate(
+        Total_ME = Total_ME * scenarios[[scenario_name]]$Total_ME,
+        uninsured = uninsured * scenarios[[scenario_name]]$uninsured
+      )
+    
+    map_dfr(years, function(year) {
+      pred <- predict(model, newdata = scenario_data, se.fit = TRUE)
+      
+      scenario_data %>%
+        mutate(
+          Year = year,
+          scenario = scenario_name,
+          predicted_ems = exp(pred$fit),
+          lower_ci = exp(pred$fit - 1.96 * pred$se.fit),
+          upper_ci = exp(pred$fit + 1.96 * pred$se.fit)
+        )
+    })
+  })
+  
+  return(all_predictions)
+}
+
+scenario_predictions <- create_scenario_predictions(model_cleaned)
+####trying to combine above with time component
+scenarios <- list(
+  optimistic = list(
+    Total_ME = 0.90,
+    uninsured = 0.95,
+    median_age = 1.02,
+    Total_narcan = 1.10,
+    low.ed = 0.95
+  ),
+  pessimistic = list(
+    Total_ME = 1.10,
+    uninsured = 1.10,
+    median_age = 0.98,
+    Total_narcan = 0.90,
+    low.ed = 1.05
+  ),
+  baseline = list(
+    Total_ME = 1.00,
+    uninsured = 1.00,
+    median_age = 1.00,
+    Total_narcan = 1.00,
+    low.ed = 1.00
+  )
+)
+
+##Creating the model to put above predictors into 
+create_trending_predictions <- function(model, years = 2025:2030, scenarios = NULL) {
+  
+  if (is.null(scenarios)) {
+    scenarios <- list(baseline = list(
+      Total_ME = 1.00,
+      uninsured = 1.00,
+      median_age = 1.00,
+      Total_narcan = 1.00,
+      low.ed = 1.00
+    ))
+  }
+  
+  # Fit trend models for each zip code and variable
+  zip_trends <- zip_change %>%
+    group_by(Zip) %>%
+    summarise(
+      me_slope = coef(lm(Total_ME ~ Year))[2],
+      me_intercept = coef(lm(Total_ME ~ Year))[1],
+      uninsured_slope = coef(lm(uninsured ~ Year))[2],
+      uninsured_intercept = coef(lm(uninsured ~ Year))[1],
+      age_slope = coef(lm(median_age ~ Year))[2],
+      age_intercept = coef(lm(median_age ~ Year))[1],
+      narcan_slope = coef(lm(Total_narcan ~ Year))[2],
+      narcan_intercept = coef(lm(Total_narcan ~ Year))[1],
+      low_ed_avg = mean(low.ed, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  # Loop over years and scenarios
+  all_predictions <- map_dfr(years, function(year) {
+    map_dfr(names(scenarios), function(scenario_name) {
+      scenario <- scenarios[[scenario_name]]
+      
+      # Project predictor values, then apply scenario multipliers
+      projected_data <- zip_trends %>%
+        mutate(
+          Year = year,
+          Total_ME = pmax(0, me_intercept + me_slope * year) * scenario$Total_ME,
+          uninsured = pmax(0, pmin(100, uninsured_intercept + uninsured_slope * year)) * scenario$uninsured,
+          median_age = pmax(18, pmin(100, age_intercept + age_slope * year)) * scenario$median_age,
+          Total_narcan = pmax(0, narcan_intercept + narcan_slope * year) * scenario$Total_narcan,
+          low.ed = low_ed_avg * scenario$low.ed
+        ) %>%
+        select(Zip, Year, Total_ME, median_age, low.ed, uninsured, Total_narcan)
+      
+      # Make predictions
+      pred <- predict(model, newdata = projected_data, se.fit = TRUE)
+      
+      # Return predictions
+      projected_data %>%
+        mutate(
+          scenario = scenario_name,
+          predicted_ems = exp(pred$fit),
+          lower_ci = exp(pred$fit - 1.96 * pred$se.fit),
+          upper_ci = exp(pred$fit + 1.96 * pred$se.fit)
+        )
+    })
+  })
+  
+  return(all_predictions)
+}
+# Create the trending predictions
+trend_predictions <- create_trending_predictions(model_cleaned, years = 2025:2030, scenarios = scenarios)
+
+
+
+
+
+# 1. TOTAL EMS CALLS ACROSS ALL ZIP CODES BY SCENARIO
+# Aggregate predictions by year and scenario
+scenario_totals <- trend_predictions %>%
+  group_by(Year, scenario) %>%
+  summarise(
+    total_calls = sum(predicted_ems, na.rm = TRUE),
+    total_lower = sum(lower_ci, na.rm = TRUE),
+    total_upper = sum(upper_ci, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Create historical totals for comparison (if available)
+historical_totals <- zip_change %>%
+  group_by(Year) %>%
+  summarise(
+    total_calls = sum(Total_ems, na.rm = TRUE),
+    scenario = "historical",
+    .groups = "drop"
+  ) %>%
+  mutate(total_lower = NA, total_upper = NA)
+
+# Combine historical and predictions
+combined_totals <- bind_rows(
+  historical_totals,
+  scenario_totals
+)
+
+# Plot 1: Total EMS Calls Timeline with trending model
+pp1 <- ggplot(combined_totals, aes(x = Year, y = total_calls, color = scenario)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  geom_ribbon(data = filter(combined_totals, scenario != "historical"),
+              aes(ymin = total_lower, ymax = total_upper, fill = scenario), 
+              alpha = 0.2, color = NA) +
+  scale_color_manual(values = c("historical" = "black", 
+                                "baseline" = "blue",
+                                "optimistic" = "green",
+                                "pessimistic"= "red")) +
+  scale_fill_manual(values = c("baseline" = "blue",
+                               "optimistic"= "green",
+                               "pessimistic" ="red")) +
+  labs(
+    title = "Total EMS Calls: Historical Data and Future Scenarios (2025-2030)",
+    subtitle = "Shaded areas represent 95% confidence intervals",
+    x = "Year",
+    y = "Total EMS Calls",
+    color = "Scenario",
+    fill = "Scenario"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  geom_vline(xintercept = 2024.5, linetype = "dashed", alpha = 0.5) +
+  scale_x_continuous(breaks = unique(combined_totals$Year)) +
+  scale_y_continuous(limits = c(0, NA))
+
+pp1

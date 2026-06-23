@@ -1,0 +1,188 @@
+##looking at changes across zip codes over time (2016-2024 eventually)
+library(MASS)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(AER)
+library(car)
+library(ggplot2)
+library(ggeffects)
+library(gridExtra)
+library(boot)
+library(knitr)
+library(kableExtra)
+library(formattable)
+library(broom)
+library(purrr)
+####Tracking risk level over time
+# Calculate risk classification for each year
+yearly_risk_classification <- od_data %>%
+  filter(Zip %in% complete_zips) %>%
+  group_by(Zip, Year) %>%
+  summarise(
+    zip_income = mean(median_income, na.rm = TRUE),
+    zip_uninsured = mean(uninsured, na.rm = TRUE),
+    zip_low_ed = mean(low.ed, na.rm = TRUE),
+    zip_narcan = mean(Total_narcan, na.rm = TRUE),
+    zip_violent = mean(Violent, na.rm = TRUE),
+    zip_nonviolent = mean(Non_violent, na.rm = TRUE),
+    zip_od_count = sum(Total_ME, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  group_by(Year) %>%  # Calculate thresholds within each year
+  mutate(
+    # Count risk factors using year-specific thresholds
+    risk_score = 
+      (zip_income < quantile(zip_income, 0.33, na.rm = TRUE)) +
+      (zip_uninsured > quantile(zip_uninsured, 0.67, na.rm = TRUE)) +
+      (zip_low_ed > quantile(zip_low_ed, 0.67, na.rm = TRUE)) +
+      (zip_narcan > quantile(zip_narcan, 0.67, na.rm = TRUE)) +
+      (zip_violent > quantile(zip_violent, 0.67, na.rm = TRUE)) +
+      (zip_nonviolent > quantile(zip_nonviolent, 0.67, na.rm = TRUE)) +
+      (zip_od_count > quantile(zip_od_count, 0.67, na.rm = TRUE)),
+    
+    # Create risk tiers
+    risk_tier = case_when(
+      risk_score >= 5 ~ "Very High Risk",
+      risk_score >= 3 ~ "High Risk",
+      risk_score >= 2 ~ "Moderate Risk",
+      TRUE ~ "Low Risk"
+    ),
+    risk_tier = factor(risk_tier, levels = c("Low Risk", "Moderate Risk", 
+                                             "High Risk", "Very High Risk")),
+    
+    # Binary flag
+    high_risk_zip = risk_score >= 3
+  ) %>%
+  ungroup()
+
+# Check how many zips are in each tier by year
+yearly_risk_classification %>%
+  count(Year, risk_tier) %>%
+  pivot_wider(names_from = risk_tier, values_from = n)
+
+# Identify zip codes that changed risk status
+risk_transitions <- yearly_risk_classification %>%
+  arrange(Zip, Year) %>%
+  group_by(Zip) %>%
+  mutate(
+    previous_risk_tier = lag(risk_tier),
+    risk_tier_change = risk_tier != previous_risk_tier,
+    previous_high_risk = lag(high_risk_zip),
+    changed_status = high_risk_zip != previous_high_risk
+  ) %>%
+  ungroup()
+
+# Summary of transitions
+risk_transitions %>%
+  filter(!is.na(changed_status), changed_status == TRUE) %>%
+  count(Year, previous_high_risk, high_risk_zip) %>%
+  mutate(
+    transition_type = case_when(
+      previous_high_risk == FALSE & high_risk_zip == TRUE ~ "Became High Risk",
+      previous_high_risk == TRUE & high_risk_zip == FALSE ~ "Improved to Low Risk"
+    )
+  )
+
+# Which zip codes moved in/out of high risk?
+movers <- risk_transitions %>%
+  filter(!is.na(changed_status), changed_status == TRUE) %>%
+  select(Zip, Year, previous_risk_tier, risk_tier, risk_score, 
+         zip_income, zip_narcan, zip_violent, zip_od_count)
+
+head(movers, 20)
+
+# Sankey-style visualization showing transitions
+library(ggalluvial)
+
+# Create flow data for consecutive years
+flow_data <- yearly_risk_classification %>%
+  filter(Year %in% c(2021, 2022, 2023, 2024)) %>%
+  select(Zip, Year, risk_tier) %>%
+  pivot_wider(names_from = Year, values_from = risk_tier, names_prefix = "Year_")
+
+# Count flows between years
+flow_summary <- flow_data %>%
+  count(Year_2021, Year_2022, Year_2023, Year_2024)
+
+# Alluvial plot
+yearly_risk_classification %>%
+  filter(Year %in% c(2021, 2022, 2023, 2024)) %>%
+  ggplot(aes(x = Year, stratum = risk_tier, alluvium = Zip, 
+             fill = risk_tier, label = risk_tier)) +
+  geom_flow(stat = "alluvium") +
+  geom_stratum() +
+  scale_fill_manual(values = c("Low Risk" = "green3", 
+                               "Moderate Risk" = "yellow2",
+                               "High Risk" = "orange2",
+                               "Very High Risk" = "red2")) +
+  labs(title = "Zip Code Risk Tier Transitions Over Time",
+       y = "Number of Zip Codes") +
+  theme_minimal()
+
+# Line plot showing risk score trends for specific zips  (only one zip code right now)
+high_movers <- risk_transitions %>%
+  group_by(Zip) %>%
+  summarise(
+    n_changes = sum(changed_status, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  filter(n_changes >= 2) %>%  # Zips that changed multiple times
+  pull(Zip)
+
+yearly_risk_classification %>%
+  filter(Zip %in% high_movers) %>%
+  ggplot(aes(x = Year, y = risk_score, group = Zip, color = Zip)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 3, linetype = "dashed", color = "red") +
+  labs(title = "Risk Score Trajectories for Volatile Zip Codes",
+       subtitle = "Dashed line = High Risk threshold",
+       y = "Risk Score (0-7)") +
+  theme_minimal()
+
+# Classify zip codes by their overall trajectory
+zip_trajectory <- yearly_risk_classification %>%
+  group_by(Zip) %>%
+  summarise(
+    start_risk_score = first(risk_score),
+    end_risk_score = last(risk_score),
+    mean_risk_score = mean(risk_score),
+    always_high_risk = all(high_risk_zip),
+    always_low_risk = all(!high_risk_zip),
+    became_high_risk = first(!high_risk_zip) & last(high_risk_zip),
+    improved = first(high_risk_zip) & last(!high_risk_zip),
+    volatile = n_distinct(risk_tier) >= 3,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    trajectory_type = case_when(
+      always_high_risk ~ "Persistently High Risk",
+      always_low_risk ~ "Persistently Low Risk",
+      became_high_risk ~ "Deteriorating",
+      improved ~ "Improving",
+      volatile ~ "Volatile",
+      TRUE ~ "Stable"
+    )
+  )
+
+table(zip_trajectory$trajectory_type)
+
+# See which zips are deteriorating
+zip_trajectory %>%
+  filter(trajectory_type == "Deteriorating") %>%
+  left_join(
+    yearly_risk_classification %>% filter(Year == max(Year)),
+    by = "Zip"
+  ) %>%
+  select(Zip, start_risk_score, end_risk_score, 
+         zip_income, zip_narcan, zip_violent, zip_od_count)
+
+
+
+
+zip_analysis24 <- yearly_risk_classification %>%
+  filter(Year == 2024)
+
+
+write.csv(zip_analysis24, "C:/Users/mdickson/OneDrive - Metro Nashville Government/Desktop/CVS_Files/mzip_analysis24.csv")

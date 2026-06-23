@@ -1,0 +1,27 @@
+{
+    "id": "5A678307",
+    "path": "~/CVS_Files/Narcan/Narcan/Regression_model.R",
+    "project_path": "Regression_model.R",
+    "type": "r_source",
+    "hash": "1111369278",
+    "contents": "",
+    "dirty": false,
+    "created": 1746550053054.0,
+    "source_on_save": false,
+    "relative_order": 4,
+    "properties": {
+        "tempName": "Untitled1",
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "36,19",
+        "scrollLine": "0"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1762973989,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1762973989441,
+    "read_only": false,
+    "read_only_alternatives": []
+}

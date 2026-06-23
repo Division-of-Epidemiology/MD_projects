@@ -1,0 +1,233 @@
+##looking at changes risk scores for the census tracts between 2021-2024
+library(MASS)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(AER)
+library(car)
+library(ggplot2)
+library(ggeffects)
+library(gridExtra)
+library(boot)
+library(knitr)
+library(kableExtra)
+library(formattable)
+library(broom)
+library(purrr)
+
+
+####Tracking risk level over time broken down by census tract -2021
+ct_data21 <- read.csv("C:/Users/mdickson/OneDrive - Metro Nashville Government/Desktop/CT_21.csv")
+
+# Calculate risk classification for each CT (find the mean and use this to compare values to categorize risk)
+ct_risk_classification21 <- ct_data21 %>%
+  group_by(OBJECTID) %>%
+  summarise(
+    income = mean(average_income, na.rm = TRUE),
+    uninsured = mean(uninsured_percentage, na.rm = TRUE),
+    low_ed = mean(high_school, na.rm = TRUE),
+    home_values = mean(median_home_value, na.rm = TRUE),
+    food_insecurity = mean(crd_foodinsecu, na.rm = TRUE),
+    poverty = mean(percent_poverty, na.rm = TRUE),
+    unemployment = sum(unemploy_rate, na.rm = TRUE),
+    me_count = sum(ME_Count, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # Calculate thresholds within each CT
+  mutate(
+    # Count risk factors using specific thresholds (upper or lower quantiles)
+    risk_score = 
+      (income < quantile(income, 0.33, na.rm = TRUE)) +
+      (uninsured > quantile(uninsured, 0.67, na.rm = TRUE)) +
+      (low_ed > quantile(low_ed, 0.67, na.rm = TRUE)) +
+      (home_values < quantile(home_values, 0.33, na.rm = TRUE)) +
+      (food_insecurity > quantile(food_insecurity, 0.67, na.rm = TRUE)) +
+      (poverty > quantile(poverty, 0.67, na.rm = TRUE)) +
+      (unemployment > quantile(unemployment, 0.67, na.rm = TRUE)) +
+      (me_count > quantile(me_count, 0.67, na.rm = TRUE)),
+    
+    # Create risk tiers
+    risk_tier = case_when(
+      risk_score >= 5 ~ "Very High Risk",
+      risk_score >= 3 ~ "High Risk",
+      risk_score >= 2 ~ "Moderate Risk",
+      TRUE ~ "Low Risk"
+    ),
+    risk_tier = factor(risk_tier, levels = c("Low Risk", "Moderate Risk", 
+                                             "High Risk", "Very High Risk")),
+    
+    # Binary flag
+    high_risk_zip = risk_score >= 3
+  ) %>%
+  ungroup()
+
+# Check how many zips are in each tier by year
+ct_risk_classification21 %>%
+  count(risk_tier) %>%
+  pivot_wider(names_from = risk_tier, values_from = n)
+
+
+write.csv(ct_risk_classification21, "C:/Users/mdickson/OneDrive - Metro Nashville Government/Desktop/CVS_Files/CT_risk_data21.csv")
+
+
+####Tracking risk level over time broken down by census tract - 2022
+ct_data22 <- read.csv("C:/Users/mdickson/OneDrive - Metro Nashville Government/Desktop/CT_22.csv")
+
+# Calculate risk classification for each CT (find the mean and use this to compare values to categorize risk)
+ct_risk_classification22 <- ct_data22 %>%
+  group_by(OBJECTID_12) %>%
+  summarise(
+    income = mean(average_income, na.rm = TRUE),
+    uninsured = mean(uninsured_percentage, na.rm = TRUE),
+    low_ed = mean(high_school, na.rm = TRUE),
+    home_values = mean(median_home_value, na.rm = TRUE),
+    food_insecurity = mean(crd_foodinsecu, na.rm = TRUE),
+    poverty = mean(percent_poverty, na.rm = TRUE),
+    unemployment = sum(unemploy_rate, na.rm = TRUE),
+    me_count = sum(ME_Count, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # Calculate thresholds within each CT
+  mutate(
+    # Count risk factors using specific thresholds (upper or lower quantiles)
+    risk_score = 
+      (income < quantile(income, 0.33, na.rm = TRUE)) +
+      (uninsured > quantile(uninsured, 0.67, na.rm = TRUE)) +
+      (low_ed > quantile(low_ed, 0.67, na.rm = TRUE)) +
+      (home_values < quantile(home_values, 0.33, na.rm = TRUE)) +
+      (food_insecurity > quantile(food_insecurity, 0.67, na.rm = TRUE)) +
+      (poverty > quantile(poverty, 0.67, na.rm = TRUE)) +
+      (unemployment > quantile(unemployment, 0.67, na.rm = TRUE)) +
+      (me_count > quantile(me_count, 0.67, na.rm = TRUE)),
+    
+    # Create risk tiers
+    risk_tier = case_when(
+      risk_score >= 5 ~ "Very High Risk",
+      risk_score >= 3 ~ "High Risk",
+      risk_score >= 2 ~ "Moderate Risk",
+      TRUE ~ "Low Risk"
+    ),
+    risk_tier = factor(risk_tier, levels = c("Low Risk", "Moderate Risk", 
+                                             "High Risk", "Very High Risk")),
+    
+    # Binary flag
+    high_risk_zip = risk_score >= 3
+  ) %>%
+  ungroup()
+
+# Check how many zips are in each tier by year
+ct_risk_classification22 %>%
+  count(risk_tier) %>%
+  pivot_wider(names_from = risk_tier, values_from = n)
+
+
+write.csv(ct_risk_classification22, "C:/Users/mdickson/OneDrive - Metro Nashville Government/Desktop/CVS_Files/CT_risk_data22.csv")
+
+
+####Tracking risk level over time broken down by census tract - 2023
+ct_data23 <- read.csv("C:/Users/mdickson/OneDrive - Metro Nashville Government/Desktop/CT_23.csv")
+
+# Calculate risk classification for each CT (find the mean and use this to compare values to categorize risk)
+ct_risk_classification23 <- ct_data23 %>%
+  group_by(OBJECTID) %>%
+  summarise(
+    income = mean(average_income, na.rm = TRUE),
+    uninsured = mean(uninsured_percentage, na.rm = TRUE),
+    low_ed = mean(high_school, na.rm = TRUE),
+    home_values = mean(median_home_value, na.rm = TRUE),
+    food_insecurity = mean(crd_foodinsecu, na.rm = TRUE),
+    poverty = mean(percent_poverty, na.rm = TRUE),
+    unemployment = sum(unemploy_rate, na.rm = TRUE),
+    me_count = sum(ME_Count, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # Calculate thresholds within each CT
+  mutate(
+    # Count risk factors using specific thresholds (upper or lower quantiles)
+    risk_score = 
+      (income < quantile(income, 0.33, na.rm = TRUE)) +
+      (uninsured > quantile(uninsured, 0.67, na.rm = TRUE)) +
+      (low_ed > quantile(low_ed, 0.67, na.rm = TRUE)) +
+      (home_values < quantile(home_values, 0.33, na.rm = TRUE)) +
+      (food_insecurity > quantile(food_insecurity, 0.67, na.rm = TRUE)) +
+      (poverty > quantile(poverty, 0.67, na.rm = TRUE)) +
+      (unemployment > quantile(unemployment, 0.67, na.rm = TRUE)) +
+      (me_count > quantile(me_count, 0.67, na.rm = TRUE)),
+    
+    # Create risk tiers
+    risk_tier = case_when(
+      risk_score >= 5 ~ "Very High Risk",
+      risk_score >= 3 ~ "High Risk",
+      risk_score >= 2 ~ "Moderate Risk",
+      TRUE ~ "Low Risk"
+    ),
+    risk_tier = factor(risk_tier, levels = c("Low Risk", "Moderate Risk", 
+                                             "High Risk", "Very High Risk")),
+    
+    # Binary flag
+    high_risk_zip = risk_score >= 3
+  ) %>%
+  ungroup()
+
+# Check how many zips are in each tier by year
+ct_risk_classification23 %>%
+  count(risk_tier) %>%
+  pivot_wider(names_from = risk_tier, values_from = n)
+
+
+write.csv(ct_risk_classification23, "C:/Users/mdickson/OneDrive - Metro Nashville Government/Desktop/CVS_Files/CT_risk_data23.csv")
+
+
+
+####Tracking risk level over time broken down by census tract - 2024
+ct_data24 <- read.csv("C:/Users/mdickson/OneDrive - Metro Nashville Government/Desktop/CT_24.csv")
+
+# Calculate risk classification for each CT (find the mean and use this to compare values to categorize risk)
+ct_risk_classification24 <- ct_data24 %>%
+  group_by(OBJECTID) %>%
+  summarise(
+    income = mean(average_income, na.rm = TRUE),
+    uninsured = mean(uninsured_percentage, na.rm = TRUE),
+    low_ed = mean(high_school, na.rm = TRUE),
+    home_values = mean(median_home_value, na.rm = TRUE),
+    food_insecurity = mean(crd_foodinsecu, na.rm = TRUE),
+    poverty = mean(percent_poverty, na.rm = TRUE),
+    unemployment = sum(unemploy_rate, na.rm = TRUE),
+    me_count = sum(ME_Count, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # Calculate thresholds within each CT
+  mutate(
+    # Count risk factors using specific thresholds (upper or lower quantiles)
+    risk_score = 
+      (income < quantile(income, 0.33, na.rm = TRUE)) +
+      (uninsured > quantile(uninsured, 0.67, na.rm = TRUE)) +
+      (low_ed > quantile(low_ed, 0.67, na.rm = TRUE)) +
+      (home_values < quantile(home_values, 0.33, na.rm = TRUE)) +
+      (food_insecurity > quantile(food_insecurity, 0.67, na.rm = TRUE)) +
+      (poverty > quantile(poverty, 0.67, na.rm = TRUE)) +
+      (unemployment > quantile(unemployment, 0.67, na.rm = TRUE)) +
+      (me_count > quantile(me_count, 0.67, na.rm = TRUE)),
+    
+    # Create risk tiers
+    risk_tier = case_when(
+      risk_score >= 5 ~ "Very High Risk",
+      risk_score >= 3 ~ "High Risk",
+      risk_score >= 2 ~ "Moderate Risk",
+      TRUE ~ "Low Risk"
+    ),
+    risk_tier = factor(risk_tier, levels = c("Low Risk", "Moderate Risk", 
+                                             "High Risk", "Very High Risk")),
+    
+    # Binary flag
+    high_risk_zip = risk_score >= 3
+  ) %>%
+  ungroup()
+
+# Check how many zips are in each tier by year
+ct_risk_classification24 %>%
+  count(risk_tier) %>%
+  pivot_wider(names_from = risk_tier, values_from = n)
+
+
+write.csv(ct_risk_classification24, "C:/Users/mdickson/OneDrive - Metro Nashville Government/Desktop/CVS_Files/CT_risk_data24.csv")

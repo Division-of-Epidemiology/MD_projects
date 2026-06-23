@@ -1,0 +1,211 @@
+
+
+bystander_words <- c("witness", "wittness", "wife", "wifew", "son", "passenger", "friends", "friend", "mother", "bystander", "bystanders", "family", "sister", "sisters", "sisster", "roommates", "rommates", "grandma", 
+                     "grandson", "grandpa", "boyfriend", "girlfriend", "girlfirend", "caregiver", "bysstander", "bystadner", "bys", "uncle", "aunt", "stranger", "strangers", "stepmother", "stepfather",
+                     "mates", "layperson", "daughter", "bistanders", "roomate", "roomates", "niece", "girlfriends", "boyfriends", "acquaintance", "dad", "clerk", "bystander's", "neighbors", "cousin", "spouse",
+                     "employee", "staff", "passerby", "employees", "mate", "coworker", "mom", "workers", "by stander's", "standers", "neighbor", "father", "mother", "husband", "brother", "staff members")
+
+other_words <- c("nurses", "firefighters", "fire", "paramedic", "crew", "medic", "ems", "RN", "teacher", "pharmacist", "hospital",  "doctors",
+                 "hosptial", "provider", "providers", "paramedics", "physicians", "partner", "doctor", "responders", "patient", "first responders")
+
+PD_words <- c("officer",  "mnpd", "sheriff", "sherriff",   "guards", "jail", "inmate", 
+              "cop", "guard", "prison", "police", "jail staff", "pd")
+
+narcan_pattern <- "(nar+can|narkan|narcan.?|naloxone|nalaxon|nalaxone)"
+
+
+action_pattern <- "(given|administered|gave|used)"
+
+
+
+make_bystander_regex <- function(bystander_words, action_pattern, narcan_pattern) {
+     bystander_pattern <- paste(tolower(bystander_words), collapse = "|")
+     
+      paste0(
+         "(?i)",
+         "(?:",
+# Pattern 1: "Bystander(s)" + action + narcan - very specific
+             "\\bbystanders?\\s+(?:", action_pattern, ")\\s+",
+          "(?:[^.?!]|\\.(?=\\d))*?",
+         "\\b(?:", narcan_pattern, ")\\b",
+         "|",
+# Pattern 2: "Per bystander(s)" or "According to bystander(s)" - ONLY if specifically mentions bystanders
+           "\\b(?:per|according\\s+to)\\s+(?:the\\s+)?bystanders?\\b",
+           "(?:[^.?!]|\\.(?=\\d))*?",
+           "\\b(?:", action_pattern, ")\\b",
+           "(?:[^.?!]|\\.(?=\\d))*?",
+           "\\b(?:", narcan_pattern, ")\\b",
+           "|",
+ # Pattern 3: "They gave" ONLY with explicit civilian context (family/bystander mentioned earlier)
+             "\\bbystanders?\\b(?:[^.?!]|\\.(?=\\d))*?\\bthey\\s+(?:", action_pattern, ")\\s+",
+          "(?:[^.?!]|\\.(?=\\d))*?",
+           "\\b(?:", narcan_pattern, ")\\b",
+           "|",
+# Pattern 4: Family members + action + narcan
+             "\\b(?:mother|father|mom|dad|family|parent|spouse|wife|husband|brother|sister|son|daughter|civilian|friend|neighbor|witness|girlfriend|boyfriend)\\s+",
+          "(?:[^.?!]|\\.(?=\\d))*?",
+           "\\b(?:", action_pattern, "|reported\\s+that\\s+(?:she|he)\\s+(?:", action_pattern, ")|sts\\s+they\\s+(?:have\\s+pt|gave))\\s+",
+           "(?:[^.?!]|\\.(?=\\d))*?",
+           "\\b(?:", narcan_pattern, ")\\b",
+           "|",
+# Pattern 5: "He/She had narcan and gave it" - personal possession context
+            "\\b(?:he|she)\\s+had\\s+(?:some\\s+)?(?:", narcan_pattern, ")\\b",
+          "(?:[^.?!]|\\.(?=\\d))*?",
+          "\\band\\s+(?:", action_pattern, ")\\s+it\\b",
+           "|",
+# Pattern 6: Family possessive forms (pt's mother, patient's family, etc.)
+             "\\b(?:pts?|patients?)'?s?\\s+(?:mother|father|mom|dad|family|parent|spouse|wife|husband)\\s+(?:", action_pattern, ")\\b",
+           "(?:[^.?!]|\\.(?=\\d))*?",
+           "\\b(?:", narcan_pattern, ")\\b",
+           "|",
+# Pattern 7: Staff members and employees (NON-MEDICAL but NOT jail staff)
+          "\\b(?:staff\\s+members?|employees?)\\s+",
+           "(?!.*\\bjail\\b)",  # Negative lookahead to exclude jail staff
+           "(?:[^.?!]|\\.(?=\\d))*?",
+           "\\b(?:", action_pattern, ")\\b",
+           "(?:[^.?!]|\\.(?=\\d))*?",
+           "\\b(?:", narcan_pattern, ")\\b",
+           "|",
+# Pattern 8: Non-medical staff (restaurant, store, etc.)
+             "\\b(?:clerk|coworker|employee)\\s+",
+           "(?![^.?!]*\\b(?:medical|hospital|jail)\\b)",  # Not medical or jail context
+           "(?:[^.?!]|\\.(?=\\d))*?",
+           "\\b(?:", action_pattern, ")\\b",
+           "(?:[^.?!]|\\.(?=\\d))*?",
+           "\\b(?:", narcan_pattern, ")\\b",
+           ")"
+        )
+}
+
+# PD regex - categorize PD from Other and Bystander
+make_pd_regex <- function(pd_words, action_pattern, narcan_pattern) {
+  pd_single <- c("officer", "mnpd", "sheriff", "sherriff", "guards", "jail", "inmate", "cop", "guard", "prison", "police", "pd")
+  pd_multi <- c("jail staff")
+  
+  pd_single_pattern <- paste(paste0("\\b", tolower(pd_single), "\\b"), collapse = "|")
+  pd_multi_pattern <- paste(tolower(pd_multi), collapse = "|")
+  
+  paste0(
+    "(?i)",
+    "(?:",
+    # Pattern 1: PD + had + given + narcan
+    "\\b(?:", pd_single_pattern, "|", pd_multi_pattern, ")\\s+had\\s+(?:", action_pattern, ")\\s+",
+    "(?:", narcan_pattern, ")",
+    "(?:\\s+in\\s+prior\\s+to|\\s+in)?",
+    "|",
+    # Pattern 2: Standard PD + action + narcan
+    "(?:", pd_single_pattern, "|", pd_multi_pattern, ")\\s+",
+    "(?:[^.?!]|\\.(?=\\d))*?",
+    "(?:", action_pattern, ")",
+    "(?:[^.?!]|\\.(?=\\d))*?",
+    "(?:", narcan_pattern, ")",
+    "|",
+    # Pattern 3: Passive - narcan given by PD
+    "(?:", narcan_pattern, ")\\s+(?:was\\s+)?(?:", action_pattern, ")\\s+by\\s+",
+    "(?:the\\s+)?(?:", pd_single_pattern, "|", pd_multi_pattern, ")",
+    ")"
+  )
+}
+
+#Other regex - trying to pull out all other examples of when NArcan is used by non-bystanders
+make_other_regex <- function(other_words, action_pattern, narcan_pattern) {
+  other_pattern <- paste(paste0("\\b", tolower(other_words), "\\b"), collapse = "|")
+  
+  paste0(
+    "(?i)",
+    "(?:",
+    # Pattern 1: "Staff administered Narcan", MEDICAL staff
+    "\\bstaff\\s+(?:", action_pattern, ")\\s+(?:", narcan_pattern, ")\\b",
+    "|",
+    # Pattern 2: "Administered X mg of Narcan IN", generic no methion of actor, assumed it is when EMS provides narcan
+    "(?:", action_pattern, ")\\s+[0-9]+\\s*mg\\s+of\\s+(?:", narcan_pattern, ")(?:\\s+in)?\\b",
+    "|",
+    # Pattern 3: "Nursing staff noted" + loss of consciousness + narcan
+    "\\bnursing\\s+staff\\s+noted\\s+",
+    "(?:[^.?!]|\\.(?=\\d))*?",
+    "(?:loss\\s+of\\s+consciousness|unconscious)",
+    "(?:[^.?!]|\\.(?=\\d))*?",
+    "(?:", narcan_pattern, ")",
+    "|",
+    # Pattern 4: Medical professionals + action + narcan
+    "\\b(?:", other_pattern, ")\\s+",
+    "(?:[^.?!]|\\.(?=\\d))*?",
+    "(?:", action_pattern, ")",
+    "(?:[^.?!]|\\.(?=\\d))*?",
+    "(?:", narcan_pattern, ")",
+    "|",
+    # Pattern 5: Dosage + narcan + administered (generic)
+    "[0-9]+\\s*mg\\s+(?:", narcan_pattern, ")\\s+was\\s+(?:", action_pattern, ")",
+    "|",
+    # Pattern 6: Passive voice without clear actor
+    "(?:", narcan_pattern, ")\\s+(?:was\\s+)?(?:", action_pattern, ")",
+    "(?!.*\\b(?:bystander|police|officer|family|witness)\\s+(?:state|said|report))",
+    "|",
+    # Pattern 7: "called for ems" context - found in a few examples with medical staff administering the narcan 
+    "(?:", action_pattern, ")\\s+(?:", narcan_pattern, ")\\s+and\\s+called\\s+for\\s+ems",
+    "|",
+    # Pattern 8: Prior to EMS arrival context
+    "(?:", narcan_pattern, ")\\s+was\\s+(?:", action_pattern, ").*?prior\\s+to\\s+ems\\s+arrival",
+    ")"
+  )
+}
+
+# Apply the detection with proper hierarchy (PD first, then Bystander, then Other)
+test_code <- ncan %>%
+  mutate(Incident_Narrative = iconv(Incident_Narrative, to = "UTF-8", sub = "")) %>%
+  mutate(
+    PD_jail = as.numeric(str_detect(
+      Incident_Narrative,
+      regex(make_pd_regex(PD_words, action_pattern, narcan_pattern))
+    )),
+    Bystander = as.numeric(str_detect(
+      Incident_Narrative,
+      regex(make_bystander_regex(bystander_words, action_pattern, narcan_pattern))
+    )),
+    Other = as.numeric(str_detect(
+      Incident_Narrative,
+      regex(make_other_regex(other_words, action_pattern, narcan_pattern))
+    ))
+  )
+
+write.csv(test_code, "C:/Users/mdickson/OneDrive - Metro Nashville Gov/Documents/CVS_Files/Narcan/Narcan/test3.csv", row.names = FALSE)
+
+
+
+
+test_code$Incident_Date <- mdy(test_code$Incident_Date)
+test_code$Year <- year(test_code$Incident_Date)
+
+test_code <- test_code %>% select(Incident_Date, Incident_Narrative, Age, Gender, Race,Address, Zip, ZIP1, Med_Admin, Dosage, Bystander, Dest_Pt_Disp, Disposition_Patient_Disposition, Medication_Administered, MMWR_Year, PD_jail, Address,Incident_Postal_Code) %>%
+  mutate(across(c(Incident_Narrative, Medication_Administered, Med_Admin, Dosage),
+                ~ iconv(as.character(.), to="UTF-8", sub="")),
+         Med_Admin= if_else(is.na(Med_Admin) | Med_Admin == "", "None", Med_Admin),
+         Medication_Administered = if_else(is.na(Medication_Administered) | Medication_Administered == "", "None", Medication_Administered),
+         Dosage = if_else(is.na(Dosage) | Dosage == "", "None", Dosage),
+         Narcan = if_else(
+           grepl("narcan", Med_Admin, ignore.case = TRUE) | 
+             grepl("narcan", Medication_Administered, ignore.case = TRUE) | 
+             grepl("narcan", Incident_Narrative, ignore.case=TRUE) |
+             Bystander == 1, 
+           "Yes", 
+           "No")) 
+
+incidents1 <- test_code %>%
+  filter(PD_jail == 0) %>%
+  filter(Narcan == "Yes") %>%
+  group_by(Year, Bystander) %>%
+  summarise(Count = n()) %>%
+  mutate(Total_count=sum(Count),
+         Percentage_BS = ifelse(Bystander==1, (Count/Total_count)*100, NA_real_))
+
+incidents1
+
+#### Narcan use from EMS data
+EMS_ncan1 <- test_code %>%
+  filter(Year != 2015) %>%
+  group_by(Year, Narcan) %>%
+  summarise(count = n()) %>%
+  mutate(Total_count=sum(count),
+         Percentage_N = ifelse(Narcan=="Yes", (count/Total_count)*100, NA_real_))
+
+print(EMS_ncan1)

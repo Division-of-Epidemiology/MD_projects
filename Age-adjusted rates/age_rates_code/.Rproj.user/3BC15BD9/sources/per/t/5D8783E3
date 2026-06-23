@@ -1,0 +1,28 @@
+{
+    "id": "5D8783E3",
+    "path": null,
+    "project_path": null,
+    "type": "object_explorer",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1776190764581.0,
+    "source_on_save": false,
+    "relative_order": 5,
+    "properties": {
+        "id": "cef2f13732844b13a120debe3ed9a547",
+        "name": "deaths_24",
+        "title": "deaths_24",
+        "language": "R",
+        "source_window_id": "",
+        "Source": "Source"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1,
+    "encoding": "",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1776190764581,
+    "read_only": false,
+    "read_only_alternatives": []
+}

@@ -1,0 +1,134 @@
+###Taking the risk tier from each of the 4 individual datasets and make one large one for year over year analysis
+##Need to clean each and rename the OBJECT ID so it is consistent across all 4 sets
+ct_21_clean <- ct_risk_classification21 %>%
+  rename(OBJECTID = OBJECTID) %>%
+  transmute(OBJECTID, Year =2021, risk_tier)
+
+ct_22_clean <- ct_risk_classification22 %>%
+  rename(OBJECTID = OBJECTID_12) %>%
+  transmute(OBJECTID, Year=2022, risk_tier)
+
+ct_23_clean <- ct_risk_classification23 %>%
+  rename(OBJECTID = OBJECTID) %>%
+  transmute(OBJECTID, Year=2023, risk_tier)
+
+ct_24_clean <- ct_risk_classification24 %>%
+  rename(OBJECTID=OBJECTID) %>%
+  transmute(OBJECTID, Year=2024, risk_tier)
+
+##Combine into one wide table for geocoding later into ArcGIS
+library(tidyr)
+
+combined <- bind_rows(
+  ct_21_clean,
+  ct_22_clean,
+  ct_23_clean,
+  ct_24_clean
+)
+
+
+wide_table <- combined %>%
+  pivot_wider(
+    names_from = Year,
+    values_from = risk_tier,
+    names_prefix = "risk_"
+  )
+
+
+###############################################################
+
+# Identify CT that changed risk status
+# Ensure ordered by year
+risk_transitions <- combined %>%
+  arrange(OBJECTID, Year) %>%
+  group_by(OBJECTID) %>%
+  mutate(
+    previous_year = lag(Year),
+    previous_risk_tier = lag(risk_tier)
+  ) %>%
+  ungroup() %>%
+  filter(!is.na(previous_risk_tier))
+
+risk_order <- c(
+  "Low Risk" = 1,
+  "Moderate Risk" = 2,
+  "High Risk" = 3,
+  "Very High Risk" = 4
+)
+
+risk_transitions <- risk_transitions %>%
+  mutate(risk_num = risk_order[risk_tier],
+         previous_risk_num = risk_order[previous_risk_tier],
+         
+         change_direction = case_when(
+           is.na(previous_risk_num) ~ "No previous year",
+           risk_num > previous_risk_num ~ "Increase in risk",
+           risk_num < previous_risk_num ~ "Decrease in risk",
+           TRUE ~ "No change in risk"
+         ))
+
+
+ggplot(
+  risk_transitions %>% filter(change_direction != "No change in risk", Year !=2021),
+  aes(x = Year, fill = change_direction)
+) +
+  geom_bar(position = "dodge") +
+  labs(
+    title = "Year-over-Year Risk Tier Changes",
+    x = "Year",
+    y = "Count of Changes",
+    fill = "Direction"
+  ) +
+  scale_fill_manual(values = c("Increase in risk" = "red", "Decrease in risk" = "blue")) +
+  theme_minimal()
+
+###graphing option 2
+
+transition_by_year <- risk_transitions %>%
+  count(previous_year, Year, previous_risk_tier, risk_tier) %>%
+  arrange(previous_year, Year)
+
+
+risk_levels <- c("Low Risk", "Moderate Risk", "High Risk", "Very High Risk")
+
+transition_matrix <- risk_transitions %>%
+  mutate(
+    Year_pair = paste(previous_year, "to", Year),
+    prev_num = match(previous_risk_tier, risk_levels),
+    curr_num = match(risk_tier, risk_levels),
+    change = case_when(
+      curr_num > prev_num ~ "Increased",
+      curr_num < prev_num ~ "Decreased",
+      TRUE ~ "No Change"
+    )
+  )
+
+transition_matrix <- transition_matrix %>%
+  mutate(
+    year_pair = paste(previous_year, "→", Year)
+  ) %>%
+  count(previous_risk_tier, risk_tier, change, year_pair)
+
+ggplot(transition_matrix,
+       aes(x = previous_risk_tier,
+           y = risk_tier,
+           fill = change)) +
+  geom_tile() +
+  geom_text(aes(label = n), color = "white", size = 5) +
+  scale_fill_manual(
+    values = c(
+      "Increased" = "firebrick",
+      "Decreased" = "steelblue",
+      "No Change" = "gray50"
+    )
+  ) +
+  labs(
+    title = "Risk Tier Transition Heatmap",
+    x = "Previous Tier",
+    y = "Current Tier",
+    fill = "Risk Movement"
+  ) +
+  facet_grid(. ~ year_pair) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+

@@ -1,0 +1,27 @@
+{
+    "id": "F54C2234",
+    "path": "~/CVS_Files/Narcan/Narcan/testing stuff.R",
+    "project_path": "testing stuff.R",
+    "type": "r_source",
+    "hash": "666291757",
+    "contents": "",
+    "dirty": false,
+    "created": 1755540111382.0,
+    "source_on_save": false,
+    "relative_order": 7,
+    "properties": {
+        "tempName": "Untitled1",
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "15,20",
+        "scrollLine": "0"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1756151567,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1756151567428,
+    "read_only": false,
+    "read_only_alternatives": []
+}

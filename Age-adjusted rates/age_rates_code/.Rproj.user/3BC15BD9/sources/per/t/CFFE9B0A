@@ -1,0 +1,28 @@
+{
+    "id": "CFFE9B0A",
+    "path": null,
+    "project_path": null,
+    "type": "object_explorer",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1776353389017.0,
+    "source_on_save": false,
+    "relative_order": 7,
+    "properties": {
+        "id": "5844dd2f34974c1680533796455f23e2",
+        "name": "demos_25",
+        "title": "demos_25",
+        "language": "R",
+        "source_window_id": "",
+        "Source": "Source"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1373055619841,
+    "encoding": "",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1776353389017,
+    "read_only": false,
+    "read_only_alternatives": []
+}

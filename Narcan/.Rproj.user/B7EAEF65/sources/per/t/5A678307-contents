@@ -1,0 +1,102 @@
+##Building a regression model to see how Narcan affects EMS calls
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+
+
+
+Narcan_OT <- data.frame(Year = c(2016:2024),
+  Bystander_total = c(13, 40, 46, 74, 188, 172, 204, 178, 128),
+  Narcan_total= c(1568, 1930, 2330, 2861, 3531, 3184, 3341, 3166, 2227),
+  EMS_total = c(3074, 3540, 3903, 4397, 5899, 5733, 5707, 5601, 4536),
+  Fentaly_percent = c(21.0, 31.8, 51.0, 62.4, 77.0, 75.6, 77.6, 79.2, 69.8))
+
+Narcan_OT
+
+qmodel <- lm(EMS_total ~ Bystander_total + Narcan_total + Fentaly_percent, data=Narcan_OT)
+summary(qmodel)
+##Just looking at EMS and bystander narcan
+bmodel <- lm(EMS_total ~ Bystander_total, data=Narcan_OT)
+summary(bmodel)
+
+##Seeing if time plays a role
+
+diff_data <- data.frame(
+  Year = 2017:2024,
+  dEMS = diff(Narcan_OT$EMS_total),
+  dBystander = diff(Narcan_OT$Bystander_total))
+
+
+model_diff <- lm(dEMS ~ dBystander, data=diff_data)
+summary(model_diff)
+
+##Seeing if fentanyl plays a role
+fent_model <- lm(EMS_total ~ Fentaly_percent, data=Narcan_OT)
+summary(fent_model)
+
+
+
+FB_model <- lm(EMS_total ~ Fentaly_percent + Bystander_total, data=Narcan_OT)
+summary(FB_model)
+
+
+####Lagged-model
+Narcan_OT$Lag_Bystander <- dplyr::lag(Narcan_OT$Bystander_total, 1)
+Narcan_OT$Lag_Fentanyl <- dplyr::lag(Narcan_OT$Fentaly_percent, 1)
+
+lagged_data <- na.omit(Narcan_OT)
+
+lagged_model <- lm(EMS_total ~ Lag_Bystander * Lag_Fentanyl + Year, data=lagged_data)
+summary(lagged_model)
+
+
+#modeling interction between fentanyl and bystander narcan
+interaction_model <- lm(EMS_total ~ Bystander_total * Fentaly_percent + Year, data=Narcan_OT)
+summary(interaction_model)
+
+
+##Poisson modeling
+model_poisson <- glm(EMS_total ~ Fentaly_percent, family = poisson(), data = Narcan_OT)
+summary(model_poisson)
+
+model_qp <- glm(EMS_total ~ Fentaly_percent, family = quasipoisson(), data = Narcan_OT)
+summary(model_qp)
+
+
+##using more count data so breaking it down by months overtime 
+ncan_track$Month <- format(as.Date(ncan_track$Incident_Date), "%B")
+
+# 1. Prepare total incident calls per month
+total_incidents <- ncan_track %>%
+  filter(PD_jail == 0, MMWR_Year != 2015) %>%
+  mutate(Month = factor(Month, levels = month.name)) %>%
+  group_by(MMWR_Year, Month) %>%
+  summarise(Total_Incidents = n(), .groups = "drop")
+
+# 2. Main pipeline
+month_counts <- ncan_track %>%
+  filter(PD_jail == 0, Narcan == "Yes", MMWR_Year != 2015) %>%
+  mutate(Month = factor(Month, levels = month.name)) %>%
+  group_by(MMWR_Year, Month) %>%
+  mutate(Total_Narcan = n()) %>%  # Total Narcan uses for that month
+  filter(Bystander == 1) %>%
+  group_by(MMWR_Year, Month, Bystander, Total_Narcan) %>%
+  summarise(Bystander_Count = n(), .groups = "drop") %>%
+  mutate(Percentage_BS = (Bystander_Count / Total_Narcan) * 100) %>%
+  left_join(total_incidents, by = c("MMWR_Year", "Month"))
+
+
+month_counts
+
+month_counts <- month_counts %>%
+  mutate(
+    EMS_Narcan_Rate = Total_Narcan / Total_Incidents,
+    Bystander_Perc = Bystander_Count / Total_Incidents)
+
+month_counts
+
+test <- lm(EMS_Narcan_Rate ~ Bystander_Perc, data = month_counts)
+summary(test)
+

@@ -1,0 +1,28 @@
+{
+    "id": "CCE7CFB6",
+    "path": null,
+    "project_path": null,
+    "type": "object_explorer",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1776353365584.0,
+    "source_on_save": false,
+    "relative_order": 6,
+    "properties": {
+        "id": "9e789e361f4e4a2a80b5c8e93a547e6f",
+        "name": "demos_24",
+        "title": "demos_24",
+        "language": "R",
+        "source_window_id": "",
+        "Source": "Source"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1373027046536,
+    "encoding": "",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1776353365584,
+    "read_only": false,
+    "read_only_alternatives": []
+}

@@ -1,0 +1,92 @@
+##Looking at percentage of Bystander NArcan using test dataset
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(tidyverse)
+library(tidytext)
+
+ncan <- read.csv("C:/Users/mdickson/OneDrive - Metro Nashville Gov/Documents/CVS_Files/Narcan/Narcan/EMS_Tableau_Quarter.csv")
+
+test <- read.csv("C:/Users/mdickson/OneDrive - Metro Nashville Gov/Documents/CVS_Files/Narcan/Narcan/test.csv")
+
+
+test_words <- tibble(test) %>%
+  unnest_tokens(word,Incident_Narrative) %>%
+  anti_join(stop_words, by = "word") %>%
+  count(word, sort = TRUE)
+
+test_2 <- tibble(ncan) %>%
+  filter(MMWR_Year == 2023) %>%
+  mutate(Incident_Narrative = iconv(Incident_Narrative, to = "UTF-8", sub = "")) %>%
+  filter(str_detect(tolower(Incident_Narrative), "narcan|naloxone")) %>%
+  unnest_tokens(word, Incident_Narrative) %>%
+  anti_join(stop_words, by="word") %>%
+  count(word, sort=TRUE)
+  
+  
+write.csv(test_code, "C:/Users/mdickson/OneDrive - Metro Nashville Gov/Documents/CVS_Files/Narcan/Narcan/words.csv", row.names = FALSE)
+
+
+bystander_words <- c("witness", "wittness", "wife", "wifew", "son", "passenger", "friends", "friend", "mother", "bystander", "bystanders", "family", "sister", "sisters", "sisster", "roommates", "rommates", "grandma", 
+                     "grandson", "grandpa", "boyfriend", "girlfriend", "girlfirend", "caregiver", "bysstander", "bystadner", "bys", "uncle", "aunt", "stranger", "strangers", "stepmother", "stepfather",
+                     "mates", "layperson", "daughter", "bistanders", "roomate", "roomates", "niece", "girlfriends", "boyfriends", "acquaintance", "dad", "clerk", "bystander's", "neighbors", "cousin", "spouse",
+                     "employee", "staff", "passerby", "employees", "mate", "coworker", "mom", "workers", "by stander's", "standers", "neighbor", "father", "mother", "husband", "brother")
+
+other_words <- c("nurses", "firefighters", "fire", "paramedic", "crew", "medic", "ems", "RN", "teacher", "pharmacist", "hospital",  "doctors",
+                  "hosptial", "provider", "providers", "paramedics", "physicians", "guard", "partner", "doctor", "responders", "patient", "pt")
+
+PD_words <- c("officer",  "mnpd", "sheriff", "sherriff",   "guards", "jail", "inmate", 
+              "cop", "guard", "prison", "police", "jail staff")
+
+narcan_pattern <- "(nar+can|narkan|narcan.?|naloxone|nalaxon|nalaxone)"
+
+
+test_code <- test %>%
+  mutate(Incident_Narrative = iconv(Incident_Narrative, to = "UTF-8", sub = "")) %>%
+  mutate(
+    PD_jail = ifelse(
+      str_detect(
+        tolower(Incident_Narrative),
+        regex(
+          paste0(
+            "(",
+            # Active voice
+            "\\b(", paste(tolower(PD_words), collapse = "|"),
+            ")\\b.*?\\b(given|administered|gave|used)\\b.*?\\b", narcan_pattern, "\\b",
+            "|",
+            # Passive voice
+            "\\b", narcan_pattern, "\\b.*?\\b(was\\s+)?(given|administered|used)\\b.*?\\bby\\b.*?\\b(",
+            paste(tolower(PD_words), collapse = "|"), ")\\b",
+            ")"
+          ), ignore_case = TRUE)),1, 0),
+    Bystander = ifelse(
+      str_detect(
+        tolower(Incident_Narrative),
+        regex(
+          paste0(
+            "(",
+            "\\b(", paste(tolower(bystander_words), collapse = "|"),
+            ")\\b.*?\\b(given|administered|gave|used)\\b.*?\\b", narcan_pattern, "\\b",
+            "|",
+            "\\b", narcan_pattern, "\\b.*?\\b(was\\s+)?(given|administered|used)\\b.*?\\bby\\b.*?\\b(",
+            paste(tolower(bystander_words), collapse = "|"), ")\\b",
+            ")"
+          ), ignore_case = TRUE)),1, 0),
+    Other = ifelse(
+      str_detect(
+        tolower(Incident_Narrative),
+        regex(
+          paste0(
+            "(",
+            "\\b(", paste(tolower(other_words), collapse = "|"),
+            ")\\b.*?\\b(given|administered|gave|used)\\b.*?\\b", narcan_pattern, "\\b",
+            "|",
+            "\\b", narcan_pattern, "\\b.*?\\b(was\\s+)?(given|administered|used)\\b.*?\\bby\\b.*?\\b(",
+            paste(tolower(other_words), collapse = "|"), ")\\b",
+            ")"
+          ),ignore_case = TRUE)),1, 0))
+
+
+

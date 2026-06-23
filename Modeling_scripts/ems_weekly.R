@@ -1,0 +1,570 @@
+##Looking at changes overtime with weekly data to see when the significant decrease started
+library(MASS)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(AER)
+library(car)
+library(ggplot2)
+library(ggeffects)
+library(gridExtra)
+library(boot)
+library(knitr)
+library(kableExtra)
+library(formattable)
+library(broom)
+library(purrr)
+library(tidyverse)
+library(scales)
+library(lubridate)
+
+
+
+
+
+ems_1624 <- read.csv("C:/Users/mdickson/OneDrive - Metro Nashville Government/Desktop/CVS_Files/EMS_2016_2024.csv")
+
+weekly_EMS <- ems_1624 %>%
+  group_by(MMWR_Year, MMWR_Week_No, Zip) %>%
+  filter(MMWR_Year != 2015) %>%
+  summarise(Total_ems = n()) %>%
+  rename(Year = MMWR_Year)
+
+write.csv(weekly_EMS, file="C:/Users/mdickson/OneDrive - Metro Nashville Government/Desktop/CVS_Files/EMS_weekly.csv", row.names=FALSE)
+
+##Creating a date that attachs to the MMWR_week_no, assuming Jan 4th falls in the first week or starts at the first week of the year
+##It will be used as the date to create the week variable across years with the function below.
+week_to_date <- function(year, week) {
+  jan4 <- as.Date(paste(year, "01", "04", sep="-"))
+  week1_start <- jan4 - wday(jan4) + 1
+  if(wday(jan4)==1){
+    week1_start <- jan4
+  }
+  return(week1_start + weeks(week-1))
+}
+
+weekly_EMS <- weekly_EMS %>%
+  mutate(date=map2_dbl(Year, MMWR_Week_No, week_to_date),
+         date=as.Date(date, origin = "1970-01-01"))
+
+
+plot_week <- ggplot(weekly_EMS, aes(x = MMWR_Week_No, y = Total_ems, color = factor(Year))) +
+  geom_line(data = filter(weekly_EMS, Year == 2023), alpha = 0.6, linewidth = 0.8) +
+  geom_line(data = filter(weekly_EMS, Year == 2024), color = "red", linewidth = 1.5) +
+  scale_color_viridis_d(name = "Year") +
+  labs(title = "EMS Calls by Week: 2016-2024",
+       subtitle = "2024 highlighted in red",
+       x = "MMWR Week Number",
+       y = "Total EMS Calls") +
+  theme_minimal() +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 14, face = "bold"))
+
+plot_week
+
+
+##Try to see where the decrease really started to take effect in the EMS data
+historical_avg <- weekly_EMS %>%
+  filter(Year >= 2020 & Year < 2024) %>%
+  group_by(Zip, MMWR_Week_No) %>%
+  summarise(Historical_avg = mean(Total_ems, na.rm=TRUE), .groups="drop")
+
+# Get 2024 data by zip code and week
+data_2024 <- weekly_EMS %>%
+  filter(Year == 2024) %>%
+  select(Zip, MMWR_Week_No, date, Total_ems_2024 = Total_ems)
+
+# Merge and calculate zip-code specific differences
+zip_weekly_comparison <- data_2024 %>%
+  left_join(historical_avg, by = c("Zip", "MMWR_Week_No")) %>%
+  mutate(
+    Historical_Avg = ifelse(is.na(Historical_avg), 0, Historical_avg),
+    difference = Total_ems_2024 - Historical_avg,
+    pct_change = ifelse(Historical_avg > 0, (difference / Historical_avg) * 100, 0)
+  )
+
+zip_weekly_comparison$change_direction <- ifelse(zip_weekly_comparison$pct_change < 0, "Below Average", "Above Average")
+
+# Remove NAs from the data first
+data_2024_clean <- zip_weekly_comparison %>% 
+  filter(!is.na(pct_change) & !is.na(Zip) & !is.na(MMWR_Week_No))
+
+g2 <- ggplot(data_2024_clean, aes(x = MMWR_Week_No)) +
+  geom_line(aes(y = Historical_avg, color = "Historical Avg (2020-2023)"), size = 1.2) +
+  geom_line(aes(y = Total_ems_2024, color = "2024 Actual"), size = 1.2) +
+  scale_color_manual(values = c("Historical Avg (2020-2023)" = "blue", "2024 Actual" = "red")) +
+  labs(title = "2024 EMS Calls vs Historical Average",
+       x = "MMWR Week Number",
+       y = "Total EMS Calls",
+       color = "") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+g2
+
+
+##aggregate data by week across all zip codes
+weekly_summary <- data_2024_clean %>%
+  group_by(MMWR_Week_No) %>%
+  summarise(
+    avg_pct_change = mean(pct_change, na.rm = TRUE),
+    # Alternative: use median instead of mean
+    # median_pct_change = median(pct_change, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    change_direction = ifelse(avg_pct_change >= 0, "Above Average", "Below Average")
+  )
+
+# Create the aggregated chart
+g3 <- ggplot(weekly_summary, aes(x = MMWR_Week_No, y = avg_pct_change)) + 
+  geom_col(aes(fill = change_direction), alpha = 0.7) + 
+  geom_hline(yintercept = 0, color = "black", alpha = 0.5) + 
+  scale_fill_manual(
+    values = c("Below Average" = "red", "Above Average" = "green"),
+    name = "Performance vs Historical Average"
+  ) + 
+  labs(
+    title = "Weekly Average Percentage Change from Historical Average (2024)", 
+    subtitle = "Aggregated across all zip codes",
+    x = "MMWR Week Number", 
+    y = "Average % Change"
+  ) + 
+  theme_minimal()
+
+print(g3)
+
+# Combine plots
+grid.arrange(g2, g3, ncol = 1)
+
+g2
+
+
+p3_heatmap <- ggplot(data_2024_clean, aes(x = MMWR_Week_No, y = as.factor(Zip), fill = pct_change)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "red", mid = "white", high = "green", midpoint = 0) +
+  scale_y_discrete() +  # This ensures ZIP codes are treated as discrete categories
+  labs(
+    title = "Percentage Change Heatmap by ZIP Code and Week",
+    x = "MMWR Week Number",
+    y = "ZIP Code",
+    fill = "% Change"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 8),  # Make ZIP code text smaller if needed
+    panel.grid = element_blank()  # Remove grid lines for cleaner heatmap look
+  )
+p3_heatmap
+
+
+p3_heatmap_clean <- ggplot(data_2024_clean, aes(x = factor(MMWR_Week_No), y = reorder(as.factor(Zip), Zip), fill = pct_change)) +
+  geom_tile(color = "white", size = 0.1) +  # Add white borders between tiles
+  scale_fill_gradient2(
+    low = "red", 
+    mid = "white", 
+    high = "green", 
+    midpoint = 0,
+    name = "% Change"
+  ) +
+  scale_x_discrete(breaks = seq(1, 52, by = 4)) +  # Show every 4th week to reduce clutter
+  labs(
+    title = "Percentage Change Heatmap by ZIP Code and Week",
+    x = "MMWR Week Number",
+    y = "ZIP Code"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 6),  # Smaller text for ZIP codes
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate week numbers
+    panel.grid = element_blank(),
+    plot.title = element_text(size = 14, hjust = 0.5)
+  )
+
+p3_heatmap_clean
+
+# Summary by zip code (all weeks combined)
+zip_summary <- zip_weekly_comparison %>%
+  group_by(Zip) %>%
+  summarise(
+    total_2024 = sum(Total_ems_2024, na.rm = TRUE),
+    total_historical = sum(Historical_avg, na.rm = TRUE),
+    total_difference = sum(difference, na.rm = TRUE),
+    avg_pct_change = mean(pct_change, na.rm = TRUE),
+    weeks_with_decrease = sum(pct_change < 0, na.rm = TRUE),
+    weeks_with_sig_decrease = sum(pct_change < -20, na.rm = TRUE),
+    total_weeks = n(),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    overall_pct_change = ifelse(total_historical > 0, 
+                                (total_difference / total_historical) * 100, 0),
+    pct_weeks_decreased = (weeks_with_decrease / total_weeks) * 100
+  ) %>%
+  arrange(total_difference)
+
+
+
+# 3. IDENTIFY SIGNIFICANT DECREASE START POINT
+cat("\n=== Identifying Significant Decrease Periods ===\n")
+
+# Define parameters (adjust these as needed)
+threshold <- -10  # 10% decrease
+min_consecutive_weeks <- 2
+
+data_2024_clean <- data_2024_clean %>%
+  mutate(significant_decrease = pct_change < threshold)
+
+# Function to find consecutive periods
+find_consecutive_periods <- function(logical_vector, min_length = 2) {
+  rle_result <- rle(logical_vector)
+  periods <- list()
+  current_pos <- 1
+  
+  for (i in seq_along(rle_result$values)) {
+    if (rle_result$values[i] && rle_result$lengths[i] >= min_length) {
+      periods <- append(periods, list(c(current_pos, current_pos + rle_result$lengths[i] - 1)))
+    }
+    current_pos <- current_pos + rle_result$lengths[i]
+  }
+  
+  return(periods)
+}
+
+significant_periods <- find_consecutive_periods(data_2024_clean$significant_decrease, min_consecutive_weeks)
+
+cat("\n=== ANALYSIS RESULTS ===\n")
+cat("Threshold for significant decrease:", threshold, "% below post-pandemic average (2020-2023)\n")
+cat("Minimum consecutive weeks required:", min_consecutive_weeks, "\n")
+
+if (length(significant_periods) > 0) {
+  cat("\nSignificant decrease periods found:\n")
+  
+  for (i in seq_along(significant_periods)) {
+    start_idx <- significant_periods[[i]][1]
+    end_idx <- significant_periods[[i]][2]
+    
+    start_week <- data_2024_clean$MMWR_Week_No[start_idx]
+    end_week <- data_2024_clean$MMWR_Week_No[end_idx]
+    start_date <- as.character(data_2024_clean$date[start_idx])
+    end_date <- as.character(data_2024_clean$date[end_idx])
+    
+    cat("  Week", start_week, "to", end_week, "(", start_date, "to", end_date, ")\n")
+    
+    period_data <- data_2024_clean[start_idx:end_idx, ]
+    cat("    Average decrease during this period:", round(mean(period_data$pct_change), 1), "%\n")
+    cat("    Maximum decrease:", round(min(period_data$pct_change), 1), "% (Week", 
+        period_data$MMWR_Week_No[which.min(period_data$pct_change)], ")\n\n")
+  }
+  
+  # Highlight the first significant decrease
+  first_decrease_start <- significant_periods[[1]][1]
+  first_week <- data_2024_clean$MMWR_Week_No[first_decrease_start]
+  first_date <- as.character(data_2024_clean$date[first_decrease_start])
+
+  
+  # Create summary table of all significant periods
+  periods_summary <- data.frame()
+  for (i in seq_along(significant_periods)) {
+    start_idx <- significant_periods[[i]][1]
+    end_idx <- significant_periods[[i]][2]
+    
+    start_week <- data_2024_clean$MMWR_Week_No[start_idx]
+    end_week <- data_2024_clean$MMWR_Week_No[end_idx]
+    start_date <- as.character(data_2024_clean$date[start_idx])
+    end_date <- as.character(data_2024_clean$date[end_idx])
+    
+    period_data <- data_2024_clean[start_idx:end_idx, ]
+    
+    periods_summary <- rbind(periods_summary, data.frame(
+      Period = i,
+      Start_Week = start_week,
+      End_Week = end_week,
+      Start_Date = start_date,
+      End_Date = end_date,
+      Duration_Weeks = end_week - start_week + 1,
+      Avg_Decrease_Pct = round(mean(period_data$pct_change), 1),
+      Max_Decrease_Pct = round(min(period_data$pct_change), 1),
+      Max_Decrease_Week = period_data$MMWR_Week_No[which.min(period_data$pct_change)]
+    ))
+  }
+  
+  cat("\n=== SIGNIFICANT PERIODS SUMMARY TABLE ===\n")
+  print(periods_summary, row.names = FALSE)
+  
+} else {
+  cat("No significant decrease periods found with current criteria.\n")
+}
+
+# Create visualization of the significant periods
+cat("\n=== Creating Significant Periods Visualization ===\n")
+
+# Create a comprehensive plot showing the analysis
+if (length(significant_periods) > 0) {
+  
+  # Prepare data for shading significant periods
+  shade_data <- data.frame()
+  for (i in seq_along(significant_periods)) {
+    start_idx <- significant_periods[[i]][1]
+    end_idx <- significant_periods[[i]][2]
+    
+    shade_data <- rbind(shade_data, data.frame(
+      xmin = data_2024_clean$MMWR_Week_No[start_idx] - 0.5,
+      xmax = data_2024_clean$MMWR_Week_No[end_idx] + 0.5,
+      period = paste("Period", i),
+      start_week = data_2024_clean$MMWR_Week_No[start_idx],
+      end_week = data_2024_clean$MMWR_Week_No[end_idx]
+    ))
+  }
+  
+  # Main trend plot with highlighted periods
+  p_main <- ggplot(data_2024_clean, aes(x = MMWR_Week_No)) +
+    geom_rect(data = shade_data, 
+              aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = period),
+              alpha = 0.3, inherit.aes = FALSE) +
+    geom_line(aes(y = Historical_avg, color = "Historical Avg (2020-2023)"), size = 1.2) +
+    geom_line(aes(y = Total_ems_2024, color = "2024 Actual"), size = 1.5) +
+    geom_hline(yintercept = 0, color = "gray", alpha = 0.5) +
+    scale_color_manual(values = c("Historical Avg (2020-2023)" = "blue", "2024 Actual" = "red")) +
+    scale_fill_manual(values = rainbow(length(significant_periods)), name = "Significant\nDecrease Periods") +
+    labs(title = "EMS Calls: 2024 vs Historical Average with Significant Decrease Periods",
+         subtitle = paste("Threshold:", abs(threshold), "% below average for", min_consecutive_weeks, "consecutive weeks"),
+         x = "MMWR Week Number",
+         y = "Total EMS Calls",
+         color = "Data Series") +
+    theme_minimal() +
+    theme(legend.position = "bottom",
+          plot.title = element_text(size = 14, face = "bold")) +
+    guides(fill = guide_legend(override.aes = list(alpha = 0.5)))
+  
+  # Percentage change plot
+  p_pct <- ggplot(data_2024_clean, aes(x = MMWR_Week_No, y = pct_change)) +
+    geom_rect(data = shade_data, 
+              aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = period),
+              alpha = 0.3, inherit.aes = FALSE) +
+    geom_col(aes(fill = ifelse(significant_decrease, "Significant Decrease", "Normal")), 
+             alpha = 0.7, width = 0.8) +
+    geom_hline(yintercept = 0, color = "black", size = 1) +
+    geom_hline(yintercept = threshold, color = "red", linetype = "dashed", size = 1) +
+    scale_fill_manual(values = c("Significant Decrease" = "red", 
+                                 "Normal" = "steelblue",
+                                 rainbow(length(significant_periods))),
+                      name = "Week Type",
+                      breaks = c("Significant Decrease", "Normal")) +
+    labs(title = "Weekly Percentage Change from Historical Average",
+         subtitle = paste("Red dashed line shows", abs(threshold), "% threshold"),
+         x = "MMWR Week Number",
+         y = "% Change from Historical Average") +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+  
+  # Combine plots
+  print(p_main)
+  print(p_pct)
+  
+}
+
+
+  
+cat("\n=== ANALYZING TOP DECREASING ZIP CODES PER WEEK ===\n")
+
+
+# Find the worst performing zip code each week
+worst_zip_per_week <- zip_weekly_comparison %>%
+  group_by(MMWR_Week_No) %>%
+  slice_min(difference, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+
+##Line chart showing performance difference over time
+worst_plot <- ggplot(worst_zip_per_week, aes(x = MMWR_Week_No, y = difference, color = as.factor(Zip))) +
+  geom_point(size = 4, alpha = 0.8) +
+  geom_text(aes(label = Zip), vjust = -0.5, hjust = 0.5, size = 3) +
+  labs(title = "Worst Performing Zip Codes by Week",
+       subtitle = "Each point represents the worst zip code for that week",
+       x = "Week Number",
+       y = "Difference from Historical Average",
+       color = "Zip Code") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        legend.position = "bottom") +
+  scale_color_brewer(type = "qual", palette = "Set2") +
+  scale_x_continuous(breaks = pretty_breaks()) +
+  geom_hline(yintercept = 0, linetype = "dashed", alpha = 0.5)
+
+
+worst_plot
+
+#Bar chart showing frequency of zip codes as worst performers
+zip_frequency <- worst_zip_per_week %>%
+  count(Zip, name = "frequency") %>%
+  arrange(desc(frequency))
+
+bar_graph <- ggplot(zip_frequency, aes(x = reorder(as.factor(Zip), frequency), y = frequency)) +
+  geom_col(fill = "coral", alpha = 0.8) +
+  geom_text(aes(label = frequency), hjust = -0.1, size = 3.5) +
+  labs(title = "Frequency of Zip Codes as Worst Performers",
+       subtitle = "How many times each zip code was the worst performer",
+       x = "Zip Code",
+       y = "Number of Weeks") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12)) +
+  coord_flip()
+
+bar_graph
+
+#Heatmap showing performance by week and zip
+# Create a complete grid of weeks and zips
+all_weeks <- min(worst_zip_per_week$MMWR_Week_No):max(worst_zip_per_week$MMWR_Week_No)
+all_zips <- unique(worst_zip_per_week$Zip)
+
+# Create performance matrix
+performance_matrix <- worst_zip_per_week %>%
+  select(MMWR_Week_No, Zip, difference) %>%
+  complete(MMWR_Week_No = all_weeks, Zip = all_zips, fill = list(difference = NA))
+
+heat_map2 <- ggplot(performance_matrix, aes(x = MMWR_Week_No, y = as.factor(Zip), fill = difference)) +
+  geom_tile(color = "white", size = 0.5) +
+  scale_fill_gradient2(low = "red", mid = "white", high = "blue", 
+                       midpoint = 0, na.value = "grey90",
+                       name = "Difference") +
+  labs(title = "Performance Heatmap",
+       subtitle = "Difference from historical average (only worst performers shown)",
+       x = "Week Number",
+       y = "Zip Code") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+heat_map2
+
+
+# Find the top 5-10 consistently worst performing zip codes overall
+top_problem_zips <- zip_weekly_comparison %>%
+  group_by(Zip) %>%
+  summarise(
+    total_difference = sum(difference, na.rm = TRUE),
+    avg_pct_change = mean(pct_change, na.rm = TRUE),
+    weeks_with_decrease = sum(difference < 0, na.rm = TRUE),
+    total_weeks = n(),
+    .groups = 'drop'
+  ) %>%
+  arrange(total_difference) %>%
+  head(10)
+
+cat("Top 10 zip codes with largest overall decreases:\n")
+print(top_problem_zips %>% 
+      select(Zip, total_difference, avg_pct_change, weeks_with_decrease), 
+      row.names = FALSE)
+
+# Get the top 5 worst zip codes for focused analysis
+top_5_worst_zips <- top_problem_zips$Zip[1:5]
+
+# Create focused dataset with just these zip codes
+focused_zip_data <- zip_weekly_comparison %>%
+  dplyr::filter(Zip %in% top_5_worst_zips) %>%
+  left_join(
+    zip_weekly_comparison %>% 
+      filter(Year == 2024) %>% 
+      select(Zip, MMWR_Week_No, date) %>% 
+      distinct(),
+    by = c("Zip", "MMWR_Week_No")
+  )
+
+# Also create aggregated data for top 5 worst zips combined
+top_5_aggregated <- focused_zip_data %>%
+  group_by(MMWR_Week_No, date.x) %>%
+  summarise(
+    total_2024 = sum(Total_ems_2024, na.rm = TRUE),
+    total_historical = sum(Historical_avg, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    difference = total_2024 - total_historical,
+    pct_change = (difference / total_historical) * 100
+  )
+
+cat("\n=== Creating Focused Visualizations ===\n")
+
+# Plot 1: Individual worst zip codes
+p_worst_individual <- ggplot(focused_zip_data, aes(x = MMWR_Week_No)) +
+  geom_line(aes(y = Historical_avg, color = "Historical Avg"), size = 1, alpha = 0.7) +
+  geom_line(aes(y = Total_ems_2024, color = "2024 Actual"), size = 1.2) +
+  facet_wrap(~Zip, scales = "free_y", 
+             labeller = labeller(Zip = function(x) paste("Zip:", x))) +
+  scale_color_manual(values = c("Historical Avg" = "blue", "2024 Actual" = "red")) +
+  labs(title = "Top 5 Zip Codes with Greatest Decreases: Individual Trends",
+       subtitle = "Each panel shows one zip code",
+       x = "MMWR Week Number",
+       y = "EMS Calls",
+       color = "") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        strip.text = element_text(face = "bold"))
+
+print(p_worst_individual)
+
+# Plot 2: Top 5 worst zip codes combined
+p_worst_combined <- ggplot(top_5_aggregated, aes(x = MMWR_Week_No)) +
+  geom_line(aes(y = total_historical, color = "Historical Avg (Top 5 Combined)"), size = 1.5) +
+  geom_line(aes(y = total_2024, color = "2024 Actual (Top 5 Combined)"), size = 1.5) +
+  scale_color_manual(values = c("Historical Avg (Top 5 Combined)" = "blue", 
+                               "2024 Actual (Top 5 Combined)" = "red")) +
+  labs(title = "Top 5 Worst Zip Codes: Combined Analysis",
+       subtitle = paste("Combined data for zip codes:", paste(top_5_worst_zips, collapse = ", ")),
+       x = "MMWR Week Number",
+       y = "Total EMS Calls (Combined)",
+       color = "") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+print(p_worst_combined)
+
+# Plot 3: Percentage change for top 5 combined
+p_worst_pct <- ggplot(top_5_aggregated, aes(x = MMWR_Week_No, y = pct_change)) +
+  geom_col(aes(fill = pct_change < threshold), alpha = 0.7) +
+  geom_hline(yintercept = 0, color = "black", size = 1) +
+  geom_hline(yintercept = threshold, color = "red", linetype = "dashed", size = 1) +
+  scale_fill_manual(values = c("TRUE" = "red", "FALSE" = "steelblue"), 
+                   name = paste("Below", abs(threshold), "%")) +
+  labs(title = "Top 5 Worst Zip Codes: Weekly % Change from Historical",
+       subtitle = paste("Combined analysis for:", paste(top_5_worst_zips, collapse = ", ")),
+       x = "MMWR Week Number",
+       y = "% Change from Historical Average") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+print(p_worst_pct)
+
+# Summary table for top 5 worst performing zip codes
+cat("\n=== SUMMARY TABLE: TOP 5 WORST PERFORMING ZIP CODES ===\n")
+detailed_summary <- focused_zip_data %>%
+  group_by(Zip) %>%
+  summarise(
+    Total_2024 = sum(Total_ems_2024, na.rm = TRUE),
+    Total_Historical = sum(Historical_avg, na.rm = TRUE),
+    Total_Difference = sum(difference, na.rm = TRUE),
+    Overall_Pct_Change = (sum(difference, na.rm = TRUE) / sum(Historical_avg, na.rm = TRUE)) * 100,
+    Weeks_Decreased = sum(difference < 0, na.rm = TRUE),
+    Worst_Week_Pct = min(pct_change, na.rm = TRUE),
+    Best_Week_Pct = max(pct_change, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  arrange(Total_Difference)
+
+print(detailed_summary, row.names = FALSE) %>%
+    filter(Year >= 2020) %>%
+    group_by(Zip, MMWR_Week_No) %>%
+    summarise(
+      avg_2020_2023 = mean(Total_ems[Year < 2024], na.rm = TRUE),
+      calls_2024 = sum(Total_ems[Year == 2024], na.rm = TRUE),
+      .groups = 'drop'
+    ) %>%
+    filter(avg_2020_2023 > 0) %>%  # Only zip codes with historical activity
+    mutate(
+      difference = calls_2024 - avg_2020_2023,
+      pct_change = (difference / avg_2020_2023) * 100
+    )
+  

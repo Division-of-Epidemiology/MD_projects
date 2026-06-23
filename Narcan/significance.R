@@ -1,0 +1,43 @@
+##seeing if it is significant
+total16 <- 1574
+bs_16 <- 13
+
+total24 <-1676
+bs_24 <- 148
+
+#calculate proportions
+p1 <- bs_16/total16
+p2 <- bs_24/total24
+
+#pool results
+p_pool <- (bs_16+bs_24)/(total16+total24)
+
+#Calculate SE
+se <- sqrt(p_pool*(1-p_pool)*((1/total16)+(1/total24)))
+
+#compute z stat
+z<- (p1-p2)/se
+
+#calculate p-value
+p_value <- 2*pnorm(-abs(z))
+
+
+# Display the results
+cat("Proportion in Year 1:", p1, "\n")
+cat("Proportion in Year 2:", p2, "\n")
+cat("Z-statistic:", z, "\n")
+cat("P-value:", p_value, "\n")
+
+# Conclusion
+if (p_value < 0.05) {
+  cat("There is a significant difference between the two years.\n")
+} else {
+  cat("There is no significant difference between the two years.\n")
+}
+
+##Looking at 2024 v 2025 for total EMS calls
+calls <- c(4536,3869)
+total<- sum(calls)
+
+expected <- rep(total /2, 2)
+chisq.test(calls, p=c(0.5,0.5))
