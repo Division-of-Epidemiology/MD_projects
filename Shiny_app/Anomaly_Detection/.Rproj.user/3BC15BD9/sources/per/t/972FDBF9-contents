@@ -1,11 +1,6 @@
 
-# ============================================================
-#  Overdose Surveillance Dashboard — Combined (ED / EMS / ME)
-#  Toggle between datasets via dropdown
-#  Thresholds: 1 SD = Elevated, 2 SD = Anomaly Detected
-#  Geospatial: Census Tract choropleth (EMS/ME exact, ED estimated)
-# ============================================================
-
+library(leaflet)
+library(sf)
 library(shiny)
 library(ggplot2)
 library(dplyr)
@@ -13,15 +8,15 @@ library(lubridate)
 library(scales)
 library(plotly)
 library(forcats)
-library(leaflet)
-library(sf)
 
-# ── 1. Load Daily Case Data (for KPIs / trend / calendar) ───
-
-load_daily <- function(path, date_col, label) {
+##HEAT RELATED SURVIELLANCE##
+# ── 1. Load & Prepare datsets ─────────────────────
+load_dataset <- function(path, date_col, zip_col, label) {
   df <- read.csv(path, stringsAsFactors = FALSE)
   df$date_parsed <- as.Date(df[[date_col]], format = "%m/%d/%Y")
-  df %>%
+  df$zip_parsed  <- as.character(df[[zip_col]])
+  
+  daily <- df %>%
     filter(!is.na(date_parsed)) %>%
     group_by(date = date_parsed) %>%
     summarise(cases = n(), .groups = "drop") %>%
@@ -32,81 +27,51 @@ load_daily <- function(path, date_col, label) {
       dow    = lubridate::wday(date, label = TRUE, abbr = TRUE, week_start = 1),
       week   = lubridate::isoweek(date)
     )
+  
+  zip_daily <- df %>%
+    filter(!is.na(date_parsed), !is.na(zip_parsed), zip_parsed != "") %>%
+    mutate(
+      date = date_parsed,
+      zip  = zip_parsed,
+      year = lubridate::year(date_parsed)
+    ) %>%
+    select(date, zip, year)
+  
+  list(daily = daily, zip = zip_daily)
 }
 
-ed_daily  <- load_daily(
-  "C:/Users/mdickson/OneDrive - Metro Nashville Gov/Desktop/CVS_Files/ESSENCE_2326.csv",
-  "Date", "ED"
+ed_raw  <- load_dataset(
+  "C:/Users/mdickson/OneDrive - Metro Nashville Gov/Desktop/CVS_Files/Heat_related_2226.csv",
+  "Date", "Zipcode", "ED"
 )
-ems_daily <- load_daily(
-  "C:/Users/mdickson/OneDrive - Metro Nashville Gov/Desktop/CVS_Files/EMS_2326.csv",
-  "Incident_Date", "EMS"
-)
-me_daily  <- load_daily(
-  "C:/Users/mdickson/OneDrive - Metro Nashville Gov/Desktop/CVS_Files/ME_2326.csv",
-  "DOD", "ME"
-)
+
 
 dataset_list <- list(
-  "ED — Emergency Department"        = ed_daily,
-  "EMS — Emergency Medical Services" = ems_daily,
-  "ME — Medical Examiner"            = me_daily
+  "ED — Emergency Department"        = ed_raw$daily
 )
 
-# ── 2. Load Tract-Level Data (from step2_tract_join.R outputs) ──
-
-# EMS/ME — exact point-in-polygon joins, one row per case
-ems_tract_raw <- read.csv(
-  "C:/Users/mdickson/OneDrive - Metro Nashville Gov/Desktop/CVS_Files/EMS_tract.csv",
-  stringsAsFactors = FALSE
-) %>%
-  mutate(GEOID = as.character(GEOID),
-         date  = as.Date(Incident_Date, format = "%m/%d/%Y")) %>%
-  filter(!is.na(GEOID), !is.na(date)) %>%
-  mutate(year = lubridate::year(date))
-
-me_tract_raw <- read.csv(
-  "C:/Users/mdickson/OneDrive - Metro Nashville Gov/Desktop/CVS_Files/ME_tract.csv",
-  stringsAsFactors = FALSE
-) %>%
-  mutate(GEOID = as.character(GEOID),
-         date  = as.Date(Exam_Date, format = "%m/%d/%Y")) %>%
-  filter(!is.na(GEOID), !is.na(date)) %>%
-  mutate(year = lubridate::year(date))
-
-# ED — apportioned estimates (already daily x tract x est_cases)
-ed_tract_raw <- read.csv(
-  "C:/Users/mdickson/OneDrive - Metro Nashville Gov/Desktop/CVS_Files/ED_tract_estimated.csv",
-  stringsAsFactors = FALSE
-) %>%
-  mutate(GEOID = as.character(GEOID),
-         date  = as.Date(date)) %>%
-  filter(!is.na(GEOID), !is.na(date)) %>%
-  mutate(year = lubridate::year(date))
-
-tract_list <- list(
-  "ED — Emergency Department"        = ed_tract_raw,
-  "EMS — Emergency Medical Services" = ems_tract_raw,
-  "ME — Medical Examiner"            = me_tract_raw
+zip_list <- list(
+  "ED — Emergency Department"        = ed_raw$zip
 )
 
-# Flag which datasets are estimated vs exact (for UI disclaimer)
-tract_is_estimated <- list(
-  "ED — Emergency Department"        = TRUE,
-  "EMS — Emergency Medical Services" = FALSE,
-  "ME — Medical Examiner"            = FALSE
+# Davidson County zip codes
+davidson_zips <- c(
+  "37013","37027","37072","37076","37080","37115","37116",
+  "37138","37143","37189","37201","37203","37204","37205",
+  "37206","37207","37208","37209","37210","37211","37212",
+  "37213","37214","37215","37216","37217","37218","37219",
+  "37220","37221","37228","37229","37232","37234","37235",
+  "37236","37238","37240","37241","37242","37243","37244",
+  "37246","37250"
 )
 
-# ── 3. Load Census Tract Shapefile ───────────────────────────
-tract_shapes <- st_read(
-  "C:/Users/mdickson/OneDrive - Metro Nashville Gov/Desktop/CVS_Files/CT_boundaries/ct.shp",
-  quiet = TRUE
-) %>%
-  st_transform(crs = 4326) %>%
-  select(GEOID = GEOCODE, geometry) %>%
-  mutate(GEOID = as.character(GEOID))
+# Load shapefile (adjust path to where your .shp file is)
+zip_shapes <- st_read("C:/Users/mdickson/OneDrive - Metro Nashville Gov/Desktop/CVS_Files/Zip_Boundaries/Zip_Codes_Boundaries.shp") %>%
+  st_transform(crs=4326) %>%
+  mutate(zip = as.character(ZipCode)) 
 
-# ── 4. Classify Days (SD-based) ──────────────────────────────
+
+# ── 2. Classify Days (SD-based) ──────────────────────────────
 classify_days <- function(df, window = 30) {
   df <- df %>% arrange(date)
   df$roll_avg <- NA_real_
@@ -134,7 +99,7 @@ classify_days <- function(df, window = 30) {
   )
 }
 
-# ── 5. UI ─────────────────────────────────────────────────────
+# ── 3. UI ─────────────────────────────────────────────────────
 ui <- fluidPage(
   tags$head(
     tags$link(href = "https://fonts.googleapis.com/css2?family=Merriweather:wght@700;900&family=Roboto:wght@400;500;600&display=swap", rel = "stylesheet"),
@@ -307,17 +272,6 @@ ui <- fluidPage(
       
       .panel-body { padding:8px 4px; }
       
-      .data-quality-note {
-        font-size: 1.2rem;
-       color: #b85e00;
-       background: #fff8ed;
-      border: 1px solid #f4d9b3;
-      border-radius: 6px;
-       padding: 8px 14px;
-       margin: 0 36px 12px;
-      max-width: 100%;
-       line-height: 1.4;}
-      
       .shiny-html-output table { width:100%; 
       border-collapse:collapse; 
       font-size:1.5rem; }
@@ -355,7 +309,7 @@ ui <- fluidPage(
   
   div(class = "dash-header",
       div(
-        div(class = "subtitle", "Overdose Surveillance System"),
+        div(class = "subtitle", "Heat Related Surveillance System"),
         tags$h1("Daily Case Monitoring for Anomaly Detection")
       ),
       uiOutput("dataset_badge")
@@ -436,27 +390,28 @@ ui <- fluidPage(
       )
   ),
   
-  # ── Map + Tract table
-  uiOutput("data_quality_note"),
+  
+  # ── Map + Zip table
   div(class = "panel-grid", style = "padding-bottom:36px;",
       div(class = "panel",
           div(class = "panel-header",
-              tags$h2("🗺️ Cases by Census Tract"),
-              uiOutput("map_badge")
+              tags$h2("🗺️ Cases by Zip Code"),
+              div(class = "panel-badge", "interactive map")
           ),
-          div(class = "panel-body", leafletOutput("tract_map", height = "440px"))
+          div(class = "panel-body", leafletOutput("zip_map", height = "420px"))
       ),
       div(class = "panel",
           div(class = "panel-header",
-              tags$h2("📍 Top 10 Census Tracts"),
+              tags$h2("📍 Top 10 Zip Codes"),
               div(class = "panel-badge", "by total cases")
           ),
-          div(style = "overflow-x:auto;", tableOutput("tract_table"))
+          div(style = "overflow-x:auto;", tableOutput("zip_table"))
       )
   )
 )
 
-# ── 6. Server ─────────────────────────────────────────────────
+
+# ── 4. Server ─────────────────────────────────────────────────
 server <- function(input, output, session) {
   
   observeEvent(input$sel_dataset, {
@@ -467,9 +422,7 @@ server <- function(input, output, session) {
   
   output$dataset_badge <- renderUI({
     lbl <- switch(input$sel_dataset,
-                  "ED — Emergency Department"        = "ED",
-                  "EMS — Emergency Medical Services" = "EMS",
-                  "ME — Medical Examiner"            = "ME", "ED")
+                  "ED — Emergency Department"         = "ED","ED")
     div(class = "dataset-badge", lbl)
   })
   
@@ -480,51 +433,19 @@ server <- function(input, output, session) {
       classify_days(window = input$window)
   })
   
-  # Tract-level aggregation: EMS/ME use 'cases' (count of rows),
-  # ED uses 'est_cases' (apportioned, can be fractional)
-  tract_data <- reactive({
+  # Zip reactive — filtered by year and Davidson County only
+  zip_data <- reactive({
     req(input$sel_year)
-    raw <- tract_list[[input$sel_dataset]] %>%
-      filter(year == as.integer(input$sel_year))
-    
-    if (input$sel_dataset == "ED — Emergency Department") {
-      raw %>%
-        group_by(GEOID) %>%
-        summarise(cases = sum(est_cases), .groups = "drop") %>%
-        arrange(desc(cases))
-    } else {
-      raw %>%
-        group_by(GEOID) %>%
-        summarise(cases = n(), .groups = "drop") %>%
-        arrange(desc(cases))
-    }
+    zip_list[[input$sel_dataset]] %>%
+      filter(
+        year == as.integer(input$sel_year),
+        zip  %in% davidson_zips
+      ) %>%
+      group_by(zip) %>%
+      summarise(cases = n(), .groups = "drop") %>%
+      arrange(desc(cases))
   })
   
-  is_estimated <- reactive({
-    tract_is_estimated[[input$sel_dataset]]
-  })
-  
-  output$map_badge <- renderUI({
-    if (is_estimated()) {
-      div(class = "panel-badge estimate", "estimated (zip apportioned)")
-    } else {
-      div(class = "panel-badge", "exact (geocoded)")
-    }
-  })
-  
-  output$data_quality_note <- renderUI({
-    if (is_estimated()) {
-      div(class = "data-quality-note",
-          "⚠ ED data only includes zip code, not address. Tract-level counts below are ",
-          tags$b("estimated"), " by apportioning each zip's daily cases across overlapping tracts ",
-          "using HUD's residential ZIP-to-Tract crosswalk. Treat these as approximations, not exact counts."
-      )
-    } else {
-      NULL
-    }
-  })
-  
-  # ── KPIs
   output$kpi_total    <- renderText({ format(sum(yr_data()$cases), big.mark = ",") })
   output$kpi_high     <- renderText({ sum(yr_data()$status == "Anomaly Detected") })
   output$kpi_high_pct <- renderText({
@@ -543,7 +464,6 @@ server <- function(input, output, session) {
   })
   output$kpi_avg <- renderText({ round(mean(yr_data()$cases), 1) })
   
-  # ── Trend chart
   output$trend_plot <- renderPlotly({
     df <- yr_data()
     plot_ly(df, x = ~date) %>%
@@ -568,7 +488,6 @@ server <- function(input, output, session) {
       ) %>% config(displayModeBar = FALSE)
   })
   
-  # ── Calendar heatmap
   output$calendar_plot <- renderPlot({
     df <- yr_data() %>%
       mutate(
@@ -580,28 +499,43 @@ server <- function(input, output, session) {
     
     month_labels <- df %>% group_by(month) %>% summarise(week_num = min(week_num), .groups = "drop")
     
-    ggplot(df, aes(x = week_num, y = fct_rev(dow_label))) +
-      geom_point(aes(color = status, size = cases, alpha = cases), shape = 16) +
-      geom_text(data = month_labels, aes(x = week_num, y = 7.9, label = month),
-                inherit.aes = FALSE, hjust = 0, size = 3.4, color = "#1a1a2e", fontface = "bold", family = "sans") +
-      scale_color_manual(values = c("Normal"="#2A9D8F","Elevated"="#F4A261","Anomaly Detected"="#E63946"), guide = "none") +
+    df <- df %>%
+      mutate(
+        week_of_month = ceiling(day(date) / 7),
+        week_label    = paste0("W", week_of_month)
+      )
+    
+    ggplot(df, aes(x = as.factor(mday(date)), y = fct_rev(month))) +
+      geom_point(
+        aes(color = status, size = cases, alpha = cases),
+        shape = 16
+      ) +
+      scale_color_manual(
+        values = c("Normal" = "#2A9D8F", "Elevated" = "#F4A261", "Anomaly Detected" = "#E63946"),
+        guide  = "none"
+      ) +
       scale_size_continuous(range = c(3, 9), guide = "none") +
       scale_alpha_continuous(range = c(0.55, 1), guide = "none") +
-      scale_x_continuous(expand = expansion(add = c(0.5, 0.5))) +
-      scale_y_discrete(expand = expansion(add = c(0.8, 1.5))) +
-      labs(x = NULL, y = NULL) +
-      theme_minimal(base_family = "sans") +
+      scale_x_discrete(
+        breaks = as.character(c(1, 5, 10, 15, 20, 25, 30)),
+        labels = c("1","5","10","15","20","25","30"),
+        expand = expansion(add = c(0.5, 0.5))
+      ) +
+      scale_y_discrete(expand = expansion(add = c(0.8, 0.8))) +
+      labs(x = "Day of Month", y = NULL) +
+      theme_minimal(base_family = "roboto") +
       theme(
         plot.background  = element_rect(fill = "#ffffff", color = NA),
         panel.background = element_rect(fill = "#ffffff", color = NA),
-        panel.grid       = element_blank(),
-        axis.text.y      = element_text(color = "#1a1a2e", size = 11, face = "bold"),
-        axis.text.x      = element_blank(),
+        panel.grid.major = element_line(color = "#f0f2f5"),
+        panel.grid.minor = element_blank(),
+        axis.text.y      = element_text(color = "#1a1a2e", size = 15, face = "bold"),
+        axis.text.x      = element_text(color = "#1a1a2e", size = 15, face = "bold"),
+        axis.title.x     = element_text(color = "#555e6d", size = 15, face="bold"),
         plot.margin      = margin(20, 24, 20, 24)
       )
   }, bg = "#ffffff")
   
-  # ── Top 15 days table
   output$top_table <- renderTable({
     yr_data() %>% arrange(desc(cases)) %>% slice_head(n = 15) %>%
       mutate(Date = format(date, "%b %d, %Y"), Cases = cases,
@@ -611,31 +545,18 @@ server <- function(input, output, session) {
       select(Date, Cases, `Roll. Avg`, `vs Avg`, Status)
   }, striped = FALSE, hover = TRUE, bordered = FALSE, spacing = "s", align = "l", rownames = FALSE)
   
-  # ── Census tract choropleth map
-  output$tract_map <- renderLeaflet({
-    td <- tract_data()
+  
+  output$zip_map <- renderLeaflet({
+    zd <- zip_data()
     
-    map_df <- tract_shapes %>%
-      left_join(td, by = "GEOID") %>%
+    map_df <- zip_shapes %>%
+      left_join(zd, by = "zip") %>%
       mutate(cases = ifelse(is.na(cases), 0, cases))
     
     pal <- colorNumeric(
-      palette = c("#6cb4cf", "#e8b339", "#e8743b", "#c62828", "#7a0c0c"),
+      palette = c("#2A9D8F", "#F4A261", "#E63946"),
       domain  = map_df$cases
     )
-    
-    label_fmt <- if (is_estimated()) {
-      sprintf("Tract %s: %.1f est. cases", map_df$GEOID, map_df$cases)
-    } else {
-      sprintf("Tract %s: %d cases", map_df$GEOID, as.integer(map_df$cases))
-    }
-    
-    popup_fmt <- if (is_estimated()) {
-      sprintf("<b>Tract: %s</b><br>Estimated Cases: <b>%.1f</b><br><i>Zip-apportioned estimate</i>",
-              map_df$GEOID, map_df$cases)
-    } else {
-      sprintf("<b>Tract: %s</b><br>Cases: <b>%d</b>", map_df$GEOID, as.integer(map_df$cases))
-    }
     
     leaflet(map_df) %>%
       addProviderTiles(providers$CartoDB.Positron) %>%
@@ -643,47 +564,38 @@ server <- function(input, output, session) {
       addPolygons(
         fillColor   = ~pal(cases),
         fillOpacity = 0.7,
-        color       = "#000000",
-        weight      = 1,
-        popup       = popup_fmt,
-        label       = label_fmt,
+        color       = "#ffffff",
+        weight      = 1.5,
+        popup       = ~paste0("<b>Zip: ", zip, "</b><br>Cases: <b>", cases, "</b>"),
+        label       = ~paste0(zip, ": ", cases, " cases"),
         highlightOptions = highlightOptions(
-          weight = 3, color = "#1d6ae5", fillOpacity = 0.9, bringToFront = TRUE
+          weight      = 3,
+          color       = "#1d6ae5",
+          fillOpacity = 0.9,
+          bringToFront = TRUE
         )
       ) %>%
       addLegend(
         position = "bottomright",
         pal      = pal,
         values   = ~cases,
-        title    = if (is_estimated()) "Est. Cases" else "Cases",
+        title    = "Cases",
         opacity  = 0.8
       )
   })
   
-  # ── Top 10 census tracts table
-  output$tract_table <- renderTable({
-    td <- tract_data() %>% slice_head(n = 10)
-    total <- sum(tract_data()$cases)
-    
-    if (is_estimated()) {
-      td %>%
-        mutate(
-          Rank   = row_number(),
-          Tract  = GEOID,
-          `Est. Cases` = round(cases, 1),
-          `% of Total` = paste0(round(100 * cases / total, 1), "%")
-        ) %>%
-        select(Rank, Tract, `Est. Cases`, `% of Total`)
-    } else {
-      td %>%
-        mutate(
-          Rank   = row_number(),
-          Tract  = GEOID,
-          Cases  = as.integer(cases),
-          `% of Total` = paste0(round(100 * cases / total, 1), "%")
-        ) %>%
-        select(Rank, Tract, Cases, `% of Total`)
-    }
+  # ── Top 10 zip code table
+  output$zip_table <- renderTable({
+    zd <- zip_data() %>%
+      slice_head(n = 10) %>%
+      mutate(
+        Rank      = row_number(),
+        `Zip Code` = zip,
+        Cases     = cases,
+        `% of Total` = paste0(round(100 * cases / sum(zip_data()$cases), 1), "%")
+      ) %>%
+      select(Rank, `Zip Code`, Cases, `% of Total`)
+    zd
   }, striped = FALSE, hover = TRUE, bordered = FALSE, spacing = "s", align = "l", rownames = FALSE)
 }
 
