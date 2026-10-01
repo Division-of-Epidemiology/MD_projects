@@ -580,27 +580,42 @@ server <- function(input, output, session) {
     
     month_labels <- df %>% group_by(month) %>% summarise(week_num = min(week_num), .groups = "drop")
     
-    ggplot(df, aes(x = week_num, y = fct_rev(dow_label))) +
-      geom_point(aes(color = status, size = cases, alpha = cases), shape = 16) +
-      geom_text(data = month_labels, aes(x = week_num, y = 7.9, label = month),
-                inherit.aes = FALSE, hjust = 0, size = 3.4, color = "#1a1a2e", fontface = "bold", family = "sans") +
-      scale_color_manual(values = c("Normal"="#2A9D8F","Elevated"="#F4A261","Anomaly Detected"="#E63946"), guide = "none") +
+    df <- df %>%
+      mutate(
+        week_of_month = ceiling(day(date) / 7),
+        week_label    = paste0("W", week_of_month)
+      )
+    
+    ggplot(df, aes(x = as.factor(mday(date)), y = fct_rev(month))) +
+      geom_point(
+        aes(color = status, size = cases, alpha = cases),
+        shape = 16
+      ) +
+      scale_color_manual(
+        values = c("Normal" = "#2A9D8F", "Elevated" = "#F4A261", "Anomaly Detected" = "#E63946"),
+        guide  = "none"
+      ) +
       scale_size_continuous(range = c(3, 9), guide = "none") +
       scale_alpha_continuous(range = c(0.55, 1), guide = "none") +
-      scale_x_continuous(expand = expansion(add = c(0.5, 0.5))) +
-      scale_y_discrete(expand = expansion(add = c(0.8, 1.5))) +
-      labs(x = NULL, y = NULL) +
-      theme_minimal(base_family = "sans") +
+      scale_x_discrete(
+        breaks = as.character(c(1, 5, 10, 15, 20, 25, 30)),
+        labels = c("1","5","10","15","20","25","30"),
+        expand = expansion(add = c(0.5, 0.5))
+      ) +
+      scale_y_discrete(expand = expansion(add = c(0.8, 0.8))) +
+      labs(x = "Day of Month", y = NULL) +
+      theme_minimal(base_family = "roboto") +
       theme(
         plot.background  = element_rect(fill = "#ffffff", color = NA),
         panel.background = element_rect(fill = "#ffffff", color = NA),
-        panel.grid       = element_blank(),
-        axis.text.y      = element_text(color = "#1a1a2e", size = 11, face = "bold"),
-        axis.text.x      = element_blank(),
+        panel.grid.major = element_line(color = "#f0f2f5"),
+        panel.grid.minor = element_blank(),
+        axis.text.y      = element_text(color = "#1a1a2e", size = 15, face = "bold"),
+        axis.text.x      = element_text(color = "#1a1a2e", size = 15, face = "bold"),
+        axis.title.x     = element_text(color = "#555e6d", size = 15, face="bold"),
         plot.margin      = margin(20, 24, 20, 24)
       )
   }, bg = "#ffffff")
-  
   # ── Top 15 days table
   output$top_table <- renderTable({
     yr_data() %>% arrange(desc(cases)) %>% slice_head(n = 15) %>%
